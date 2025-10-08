@@ -1,7 +1,7 @@
 """Data mapping logic from Todoist to Capacities."""
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from app.logging_setup import get_logger
 from app.models import (
@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 def map_task_to_todo(
     task: TodoistTask,
     project: TodoistProject,
-    comments: list[TodoistComment],
+    comments: List[TodoistComment],
     section_name: Optional[str] = None,
 ) -> CapacitiesToDo:
     """

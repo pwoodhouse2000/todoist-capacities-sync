@@ -2,14 +2,14 @@
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List
 
 import orjson
 
 from app.settings import settings
 
 
-def compute_payload_hash(data: dict[str, Any]) -> str:
+def compute_payload_hash(data: Dict[str, Any]) -> str:
     """
     Compute a deterministic hash of a payload for idempotency checks.
 
@@ -50,7 +50,7 @@ def has_capsync_label(labels: list[str]) -> bool:
     return "@capsync" in labels or "capsync" in labels
 
 
-def format_markdown_comments(comments: list[dict[str, Any]]) -> str:
+def format_markdown_comments(comments: List[Dict[str, Any]]) -> str:
     """
     Format Todoist comments as markdown.
 
@@ -75,7 +75,7 @@ def format_markdown_comments(comments: list[dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(formatted_parts)
 
 
-def safe_get(data: dict[str, Any], key: str, default: Any = None) -> Any:
+def safe_get(data: Dict[str, Any], key: str, default: Any = None) -> Any:
     """Safely get a value from a dictionary."""
     return data.get(key, default)
 

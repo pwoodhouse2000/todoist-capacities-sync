@@ -1,6 +1,6 @@
 """Capacities API client for creating and updating objects."""
 
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -45,9 +45,9 @@ class CapacitiesClient:
         self,
         method: str,
         endpoint: str,
-        json_data: Optional[dict] = None,
-        params: Optional[dict] = None,
-    ) -> dict:
+        json_data: Optional[Dict] = None,
+        params: Optional[Dict] = None,
+    ) -> Dict:
         """
         Make HTTP request to Capacities API with retry logic.
 
@@ -83,7 +83,7 @@ class CapacitiesClient:
             response.raise_for_status()
             return response.json() if response.content else {}
 
-    async def get_space_info(self) -> dict[str, Any]:
+    async def get_space_info(self) -> Dict[str, Any]:
         """
         Get space information including structures and property definitions.
 
@@ -96,8 +96,8 @@ class CapacitiesClient:
     async def create_object(
         self,
         structure_id: str,
-        properties: dict[str, Any],
-    ) -> dict[str, Any]:
+        properties: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
         Create a new object in Capacities.
 
@@ -128,8 +128,8 @@ class CapacitiesClient:
     async def update_object(
         self,
         object_id: str,
-        properties: dict[str, Any],
-    ) -> dict[str, Any]:
+        properties: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
         Update an existing object in Capacities.
 
@@ -157,8 +157,8 @@ class CapacitiesClient:
     async def search_objects(
         self,
         structure_id: str,
-        query: Optional[dict[str, Any]] = None,
-    ) -> list[dict[str, Any]]:
+        query: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Search for objects by structure and optional query.
 
@@ -189,7 +189,7 @@ class CapacitiesClient:
         structure_id: str,
         property_name: str,
         property_value: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Find an object by a specific property value.
 
@@ -211,7 +211,7 @@ class CapacitiesClient:
         self,
         todo: CapacitiesToDo,
         existing_object_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """
         Create or update a @ToDo object in Capacities.
 
@@ -236,7 +236,7 @@ class CapacitiesClient:
         self,
         project: CapacitiesProject,
         existing_object_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """
         Create or update a Project object in Capacities.
 
@@ -255,7 +255,7 @@ class CapacitiesClient:
             # Structure ID for Project (custom structure)
             return await self.create_object("project_structure_id", properties)
 
-    def _todo_to_properties(self, todo: CapacitiesToDo) -> dict[str, Any]:
+    def _todo_to_properties(self, todo: CapacitiesToDo) -> Dict[str, Any]:
         """
         Convert CapacitiesToDo model to Capacities properties format.
 
@@ -292,7 +292,7 @@ class CapacitiesClient:
             "error_note": todo.error_note,
         }
 
-    def _project_to_properties(self, project: CapacitiesProject) -> dict[str, Any]:
+    def _project_to_properties(self, project: CapacitiesProject) -> Dict[str, Any]:
         """
         Convert CapacitiesProject model to Capacities properties format.
 

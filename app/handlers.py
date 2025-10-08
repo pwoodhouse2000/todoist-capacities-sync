@@ -1,6 +1,6 @@
 """Request handlers for webhooks and reconciliation."""
 
-from typing import Any
+from typing import Any, Dict, Optional, Union
 
 from google.cloud import pubsub_v1
 
@@ -29,7 +29,7 @@ class WebhookHandler:
         self.publisher = pubsub_publisher
         self.topic_path = self.publisher.topic_path(settings.gcp_project_id, settings.pubsub_topic)
 
-    async def handle_event(self, event: TodoistWebhookEvent) -> dict[str, str]:
+    async def handle_event(self, event: TodoistWebhookEvent) -> Dict[str, str]:
         """
         Handle a Todoist webhook event.
 
@@ -80,7 +80,7 @@ class WebhookHandler:
 
         return {"status": "queued", "task_id": task_id, "action": action.value}
 
-    def _determine_action(self, event_name: str, event_data: dict[str, Any]) -> SyncAction | None:
+    def _determine_action(self, event_name: str, event_data: Dict[str, Any]) -> Optional[SyncAction]:
         """
         Determine sync action based on webhook event.
 
@@ -148,7 +148,7 @@ class ReconcileHandler:
         self.store = store
         self.worker = SyncWorker(todoist_client, capacities_client, store)
 
-    async def reconcile(self) -> dict[str, Any]:
+    async def reconcile(self) -> Dict[str, Any]:
         """
         Perform full reconciliation of all @capsync tasks.
 

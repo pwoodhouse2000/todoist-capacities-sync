@@ -9,11 +9,11 @@ echo ""
 # Check Python version
 echo "Checking Python version..."
 python_version=$(python3 --version 2>&1 | awk '{print $2}')
-required_version="3.11"
+required_version="3.9"
 
 if [[ $(echo -e "$python_version\n$required_version" | sort -V | head -n1) != "$required_version" ]]; then
-    echo "❌ Python 3.11+ is required, but you have $python_version"
-    echo "   Install Python 3.11 or higher and try again"
+    echo "❌ Python 3.9+ is required, but you have $python_version"
+    echo "   Install Python 3.9 or higher and try again"
     exit 1
 fi
 echo "✅ Python $python_version"

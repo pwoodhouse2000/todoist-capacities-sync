@@ -1,6 +1,6 @@
 """Todoist API client for fetching tasks, projects, sections, and comments."""
 
-from typing import Optional
+from typing import Dict, List, Optional, Union
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -38,7 +38,7 @@ class TodoistClient:
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
     )
-    async def _get(self, endpoint: str, params: Optional[dict] = None) -> dict | list:
+    async def _get(self, endpoint: str, params: Optional[Dict] = None) -> Union[Dict, List]:
         """
         Make GET request to Todoist API with retry logic.
 
@@ -73,7 +73,7 @@ class TodoistClient:
         data = await self._get(f"/tasks/{task_id}")
         return TodoistTask(**data)
 
-    async def get_tasks(self, label: Optional[str] = None) -> list[TodoistTask]:
+    async def get_tasks(self, label: Optional[str] = None) -> List[TodoistTask]:
         """
         Fetch all tasks, optionally filtered by label.
 
@@ -105,7 +105,7 @@ class TodoistClient:
         data = await self._get(f"/projects/{project_id}")
         return TodoistProject(**data)
 
-    async def get_projects(self) -> list[TodoistProject]:
+    async def get_projects(self) -> List[TodoistProject]:
         """
         Fetch all projects.
 
@@ -130,7 +130,7 @@ class TodoistClient:
         data = await self._get(f"/sections/{section_id}")
         return TodoistSection(**data)
 
-    async def get_sections(self, project_id: Optional[str] = None) -> list[TodoistSection]:
+    async def get_sections(self, project_id: Optional[str] = None) -> List[TodoistSection]:
         """
         Fetch sections, optionally filtered by project.
 
@@ -148,7 +148,7 @@ class TodoistClient:
         data = await self._get("/sections", params=params)
         return [TodoistSection(**section) for section in data]
 
-    async def get_comments(self, task_id: str) -> list[TodoistComment]:
+    async def get_comments(self, task_id: str) -> List[TodoistComment]:
         """
         Fetch all comments for a task.
 
@@ -162,7 +162,7 @@ class TodoistClient:
         data = await self._get("/comments", params={"task_id": task_id})
         return [TodoistComment(**comment) for comment in data]
 
-    async def get_active_tasks_with_label(self, label: str = "@capsync") -> list[TodoistTask]:
+    async def get_active_tasks_with_label(self, label: str = "@capsync") -> List[TodoistTask]:
         """
         Fetch all active tasks with the specified label.
 

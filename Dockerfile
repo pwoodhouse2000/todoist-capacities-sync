@@ -1,5 +1,5 @@
 # Multi-stage build for Python application
-FROM python:3.11-slim as builder
+FROM python:3.9-slim as builder
 
 # Install Poetry
 RUN pip install poetry==1.7.1
@@ -15,7 +15,7 @@ RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
 
 
 # Production stage
-FROM python:3.11-slim
+FROM python:3.9-slim
 
 # Set working directory
 WORKDIR /app

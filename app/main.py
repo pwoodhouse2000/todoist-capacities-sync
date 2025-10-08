@@ -1,7 +1,7 @@
 """FastAPI application entry point."""
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import ORJSONResponse
@@ -75,13 +75,13 @@ app = FastAPI(
 
 
 @app.get("/health")
-async def health_check() -> dict[str, str]:
+async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy"}
 
 
 @app.post("/todoist/webhook")
-async def todoist_webhook(request: Request) -> dict[str, Any]:
+async def todoist_webhook(request: Request) -> Dict[str, Any]:
     """
     Receive Todoist webhook events.
 
@@ -113,7 +113,7 @@ async def todoist_webhook(request: Request) -> dict[str, Any]:
 async def reconcile(
     request: Request,
     authorization: str = Header(None),
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """
     Trigger manual reconciliation of all @capsync tasks.
 
@@ -149,7 +149,7 @@ async def reconcile(
 
 
 @app.get("/")
-async def root() -> dict[str, str]:
+async def root() -> Dict[str, str]:
     """Root endpoint."""
     return {
         "service": "Todoist-Capacities Sync",

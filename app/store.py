@@ -1,7 +1,7 @@
 """Firestore operations for storing sync state."""
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from google.cloud import firestore
 from google.cloud.firestore_v1 import AsyncClient
@@ -137,7 +137,7 @@ class FirestoreStore:
 
         await doc_ref.set(data)
 
-    async def get_all_task_states(self) -> list[TaskSyncState]:
+    async def get_all_task_states(self) -> List[TaskSyncState]:
         """
         Retrieve all task sync states.
 

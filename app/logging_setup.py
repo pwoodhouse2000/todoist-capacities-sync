@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from typing import Any
+from typing import Any, Dict
 
 import orjson
 
@@ -14,7 +14,7 @@ class StructuredFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as JSON."""
-        log_obj: dict[str, Any] = {
+        log_obj: Dict[str, Any] = {
             "severity": record.levelname,
             "message": record.getMessage(),
             "timestamp": self.formatTime(record, self.datefmt),
