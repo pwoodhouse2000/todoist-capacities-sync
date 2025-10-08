@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "todoist-capacities-sync"
+version = "1.0.0"
+description = "Sync Todoist tasks to Capacities using Google Cloud services"
+authors = ["Pete Woodhouse <pete@example.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+google-cloud-firestore = "^2.14.0"
+google-cloud-secret-manager = "^2.18.0"
+google-cloud-pubsub = "^2.19.0"
+httpx = "^0.26.0"
+pydantic = "^2.5.3"
+pydantic-settings = "^2.1.0"
+python-dotenv = "^1.0.0"
+orjson = "^3.9.10"
+tenacity = "^8.2.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.4"
+pytest-asyncio = "^0.23.3"
+ruff = "^0.1.14"
+mypy = "^1.8.0"
+types-requests = "^2.31.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+

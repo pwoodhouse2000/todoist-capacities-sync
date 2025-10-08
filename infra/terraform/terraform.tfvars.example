@@ -1,0 +1,16 @@
+# GCP Configuration
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+
+# Container Image
+# Build and push your image first, then update this URL
+image = "us-central1-docker.pkg.dev/your-gcp-project-id/default/todoist-capacities-sync:latest"
+
+# Capacities Configuration
+capacities_space_id = "your-capacities-space-id"
+
+# Optional: Override defaults
+# firestore_namespace = "todoist-capacities-v1"
+# default_timezone = "America/Los_Angeles"
+# reconcile_schedule = "0 * * * *"  # Hourly
+
