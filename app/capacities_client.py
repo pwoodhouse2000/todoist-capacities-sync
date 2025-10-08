@@ -91,7 +91,7 @@ class CapacitiesClient:
             Space info dictionary with structures
         """
         logger.info("Fetching Capacities space info")
-        return await self._request("GET", "/space-info", params={"spaceId": self.space_id})
+        return await self._request("GET", "/space-info", params={"spaceid": self.space_id})
 
     async def create_object(
         self,
@@ -112,9 +112,8 @@ class CapacitiesClient:
             Created object data including ID
         """
         payload = {
-            "spaceId": self.space_id,
-            "structureId": structure_id,
-            "properties": properties,
+            "spaceid": self.space_id,
+            "mdText": properties,  # Capacities uses mdText for markdown content
         }
 
         logger.info(
@@ -141,9 +140,9 @@ class CapacitiesClient:
             Updated object data
         """
         payload = {
-            "spaceId": self.space_id,
-            "objectId": object_id,
-            "properties": properties,
+            "spaceid": self.space_id,
+            "id": object_id,
+            "mdText": properties,
         }
 
         logger.info(
@@ -170,8 +169,8 @@ class CapacitiesClient:
             List of matching objects
         """
         params = {
-            "spaceId": self.space_id,
-            "structureId": structure_id,
+            "spaceid": self.space_id,
+            "structureid": structure_id,
         }
         if query:
             params.update(query)
