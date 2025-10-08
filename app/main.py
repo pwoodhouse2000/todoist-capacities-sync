@@ -44,11 +44,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize clients
     app.state.todoist_client = TodoistClient()
     app.state.capacities_client = CapacitiesClient()
-    app.state.store = FirestoreStore()
-    app.state.pubsub_publisher = pubsub_v1.PublisherClient()
+    
+    # Initialize GCP clients (optional for local dev)
+    try:
+        app.state.store = FirestoreStore()
+        app.state.pubsub_publisher = pubsub_v1.PublisherClient()
+        logger.info("GCP clients initialized successfully")
+    except Exception as e:
+        logger.warning(f"GCP clients not available (running in local dev mode): {e}")
+        app.state.store = None
+        app.state.pubsub_publisher = None
 
     # Initialize handlers
-    app.state.webhook_handler = WebhookHandler(app.state.pubsub_publisher)
+    if app.state.pubsub_publisher:
+        app.state.webhook_handler = WebhookHandler(app.state.pubsub_publisher)
+    else:
+        app.state.webhook_handler = None
+        
     app.state.reconcile_handler = ReconcileHandler(
         app.state.todoist_client,
         app.state.capacities_client,
@@ -61,7 +73,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Cleanup
     logger.info("Shutting down application")
-    await app.state.store.close()
+    if app.state.store:
+        await app.state.store.close()
 
 
 # Create FastAPI app
@@ -91,6 +104,16 @@ async def todoist_webhook(request: Request) -> Dict[str, Any]:
     Returns:
         Response dictionary
     """
+    # Check if running in local dev mode (no Pub/Sub)
+    if not request.app.state.webhook_handler:
+        logger.info("Received webhook in local dev mode (Pub/Sub not available)")
+        payload = await request.json()
+        return {
+            "status": "received_local_dev",
+            "message": "Running in local dev mode without Pub/Sub. Deploy to GCP for full functionality.",
+            "event": payload.get("event_name", "unknown"),
+        }
+    
     try:
         # Parse webhook payload
         payload = await request.json()
@@ -126,6 +149,13 @@ async def reconcile(
     Returns:
         Reconciliation summary
     """
+    # Check if running in local dev mode (no Firestore)
+    if not request.app.state.store:
+        return {
+            "status": "local_dev_mode",
+            "message": "Running in local dev mode without Firestore. Deploy to GCP for reconciliation.",
+        }
+    
     # Verify authorization token
     expected_token = f"Bearer {settings.internal_cron_token}"
     if authorization != expected_token:
@@ -149,13 +179,57 @@ async def reconcile(
 
 
 @app.get("/")
-async def root() -> Dict[str, str]:
+async def root(request: Request) -> Dict[str, Any]:
     """Root endpoint."""
+    gcp_available = request.app.state.store is not None and request.app.state.pubsub_publisher is not None
     return {
         "service": "Todoist-Capacities Sync",
         "version": "1.0.0",
         "status": "running",
+        "mode": "production" if gcp_available else "local_dev",
+        "gcp_clients": {
+            "firestore": request.app.state.store is not None,
+            "pubsub": request.app.state.pubsub_publisher is not None,
+        },
     }
+
+
+@app.get("/test/todoist")
+async def test_todoist(request: Request) -> Dict[str, Any]:
+    """Test Todoist API connection."""
+    try:
+        projects = await request.app.state.todoist_client.get_projects()
+        return {
+            "status": "success",
+            "message": "Todoist API connected successfully",
+            "project_count": len(projects),
+            "projects": [{"id": p.id, "name": p.name} for p in projects[:5]],  # First 5
+        }
+    except Exception as e:
+        logger.error("Error testing Todoist API", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Todoist API error: {str(e)}",
+        }
+
+
+@app.get("/test/capacities")
+async def test_capacities(request: Request) -> Dict[str, Any]:
+    """Test Capacities API connection."""
+    try:
+        space_info = await request.app.state.capacities_client.get_space_info()
+        return {
+            "status": "success",
+            "message": "Capacities API connected successfully",
+            "space_id": settings.capacities_space_id,
+            "structures": list(space_info.keys()) if isinstance(space_info, dict) else "unknown",
+        }
+    except Exception as e:
+        logger.error("Error testing Capacities API", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Capacities API error: {str(e)}",
+        }
 
 
 if __name__ == "__main__":
