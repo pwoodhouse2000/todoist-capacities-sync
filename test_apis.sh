@@ -1,53 +1,41 @@
 #!/bin/bash
-# Test both Todoist and Capacities APIs
 
-set -e
-
-echo "🧪 Testing Todoist-Capacities Sync APIs"
+echo "🧪 Testing Todoist-Notion Sync APIs"
 echo ""
 
 # Check if service is running
-if ! curl -s http://localhost:8000/health > /dev/null 2>&1; then
-    echo "❌ Service is not running!"
-    echo "   Start it with: ./run_simple.sh"
+if curl -s http://localhost:8000/health | grep -q "healthy"; then
+    echo "✅ Service is running"
+else
+    echo "❌ Service is not running. Please start it with ./run_simple.sh"
     exit 1
 fi
 
-echo "✅ Service is running"
 echo ""
-
-# Test service status
 echo "📊 Service Status:"
-curl -s http://localhost:8000/ | python -m json.tool
+curl -s http://localhost:8000/ | python3 -m json.tool
 echo ""
 
-# Test Todoist API
 echo "📝 Testing Todoist API..."
-TODOIST_RESULT=$(curl -s http://localhost:8000/test/todoist)
-TODOIST_STATUS=$(echo "$TODOIST_RESULT" | python -c "import sys, json; print(json.load(sys.stdin)['status'])")
-
-if [ "$TODOIST_STATUS" = "success" ]; then
+TODOIST_TEST_RESPONSE=$(curl -s "http://localhost:8000/test/todoist?show_tasks=true")
+if echo "$TODOIST_TEST_RESPONSE" | grep -q "\"status\": \"success\""; then
     echo "✅ Todoist API connected successfully"
-    echo "$TODOIST_RESULT" | python -m json.tool | head -15
+    echo "$TODOIST_TEST_RESPONSE" | python3 -m json.tool
 else
-    echo "❌ Todoist API failed"
-    echo "$TODOIST_RESULT" | python -m json.tool
+    echo "❌ Todoist API test failed"
+    echo "$TODOIST_TEST_RESPONSE" | python3 -m json.tool
 fi
 echo ""
 
-# Test Capacities API
-echo "🗂️  Testing Capacities API..."
-CAPACITIES_RESULT=$(curl -s http://localhost:8000/test/capacities)
-CAPACITIES_STATUS=$(echo "$CAPACITIES_RESULT" | python -c "import sys, json; print(json.load(sys.stdin)['status'])")
-
-if [ "$CAPACITIES_STATUS" = "success" ]; then
-    echo "✅ Capacities API connected successfully"
-    echo "$CAPACITIES_RESULT" | python -m json.tool
+echo "🗂️  Testing Notion API..."
+NOTION_TEST_RESPONSE=$(curl -s http://localhost:8000/test/notion)
+if echo "$NOTION_TEST_RESPONSE" | grep -q "\"status\": \"success\""; then
+    echo "✅ Notion API connected successfully"
+    echo "$NOTION_TEST_RESPONSE" | python3 -m json.tool
 else
-    echo "❌ Capacities API failed"
-    echo "$CAPACITIES_RESULT" | python -m json.tool
+    echo "❌ Notion API test failed"
+    echo "$NOTION_TEST_RESPONSE" | python3 -m json.tool
 fi
 echo ""
 
 echo "🎉 All tests complete!"
-

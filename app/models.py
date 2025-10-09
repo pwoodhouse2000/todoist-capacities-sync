@@ -67,45 +67,22 @@ class TodoistComment(BaseModel):
 
 
 # ============================================================================
-# Capacities Models
+# Notion Models
 # ============================================================================
 
 
-class CapacitiesPropertyType(str, Enum):
-    """Capacities property types."""
-
-    TEXT = "text"
-    NUMBER = "number"
-    DATE = "date"
-    CHECKBOX = "checkbox"
-    URL = "url"
-    TAG = "tag"
-    RELATION = "relation"
-
-
-class CapacitiesProperty(BaseModel):
-    """Capacities property definition."""
-
-    id: str
-    type: CapacitiesPropertyType
-    value: Any
-
-
-class CapacitiesToDo(BaseModel):
-    """Capacities @ToDo object to be created/updated."""
+class NotionToDo(BaseModel):
+    """Notion page for a ToDo item."""
 
     # Core fields
     title: str
-    body: str = ""  # Rich text/markdown
+    body: str = ""  # Description
 
     # Todoist identifiers
     todoist_task_id: str
     todoist_url: str
     todoist_project_id: str
     todoist_project_name: str
-
-    # Relations
-    project_relation_id: Optional[str] = None  # Capacities Project object ID
 
     # Metadata
     todoist_labels: list[str] = Field(default_factory=list)
@@ -134,8 +111,8 @@ class CapacitiesToDo(BaseModel):
     error_note: Optional[str] = None
 
 
-class CapacitiesProject(BaseModel):
-    """Capacities Project object."""
+class NotionProject(BaseModel):
+    """Notion page for a Project."""
 
     todoist_project_id: str
     name: str

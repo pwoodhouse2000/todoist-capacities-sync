@@ -1,12 +1,12 @@
-"""Data mapping logic from Todoist to Capacities."""
+"""Data mapping logic from Todoist to Notion."""
 
 from datetime import datetime
 from typing import List, Optional
 
 from app.logging_setup import get_logger
 from app.models import (
-    CapacitiesProject,
-    CapacitiesToDo,
+    NotionProject,
+    NotionToDo,
     TodoistComment,
     TodoistProject,
     TodoistTask,
@@ -21,9 +21,9 @@ def map_task_to_todo(
     project: TodoistProject,
     comments: List[TodoistComment],
     section_name: Optional[str] = None,
-) -> CapacitiesToDo:
+) -> NotionToDo:
     """
-    Map a Todoist task to a Capacities @ToDo object.
+    Map a Todoist task to a Notion ToDo page.
 
     Args:
         task: Todoist task
@@ -32,10 +32,10 @@ def map_task_to_todo(
         section_name: Section name if task is in a section
 
     Returns:
-        CapacitiesToDo object ready for sync
+        NotionToDo object ready for sync
     """
     logger.info(
-        "Mapping Todoist task to Capacities ToDo",
+        "Mapping Todoist task to Notion ToDo",
         extra={"task_id": task.id, "content": task.content},
     )
 
@@ -66,7 +66,7 @@ def map_task_to_todo(
     # Current timestamp
     now = get_current_timestamp()
 
-    return CapacitiesToDo(
+    return NotionToDo(
         title=task.content,
         body=body,
         todoist_task_id=task.id,
@@ -91,22 +91,22 @@ def map_task_to_todo(
     )
 
 
-def map_project_to_capacities(project: TodoistProject) -> CapacitiesProject:
+def map_project_to_notion(project: TodoistProject) -> NotionProject:
     """
-    Map a Todoist project to a Capacities Project object.
+    Map a Todoist project to a Notion Project page.
 
     Args:
         project: Todoist project
 
     Returns:
-        CapacitiesProject object
+        NotionProject object
     """
     logger.info(
-        "Mapping Todoist project to Capacities Project",
+        "Mapping Todoist project to Notion Project",
         extra={"project_id": project.id, "project_name": project.name},
     )
 
-    return CapacitiesProject(
+    return NotionProject(
         todoist_project_id=project.id,
         name=project.name,
         url=project.url,
@@ -116,7 +116,7 @@ def map_project_to_capacities(project: TodoistProject) -> CapacitiesProject:
     )
 
 
-def create_archived_todo(task: TodoistTask, project: TodoistProject) -> CapacitiesToDo:
+def create_archived_todo(task: TodoistTask, project: TodoistProject) -> NotionToDo:
     """
     Create an archived version of a ToDo (for tasks with @capsync removed).
 
@@ -125,7 +125,7 @@ def create_archived_todo(task: TodoistTask, project: TodoistProject) -> Capaciti
         project: Todoist project
 
     Returns:
-        CapacitiesToDo with archived status
+        NotionToDo with archived status
     """
     logger.info(
         "Creating archived ToDo",
@@ -134,9 +134,9 @@ def create_archived_todo(task: TodoistTask, project: TodoistProject) -> Capaciti
 
     now = get_current_timestamp()
 
-    return CapacitiesToDo(
+    return NotionToDo(
         title=task.content,
-        body=task.description,
+        body=task.description or "",
         todoist_task_id=task.id,
         todoist_url=task.url,
         todoist_project_id=task.project_id,
@@ -150,4 +150,3 @@ def create_archived_todo(task: TodoistTask, project: TodoistProject) -> Capaciti
         last_synced_at=now,
         sync_status="archived",
     )
-

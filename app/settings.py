@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     )
 
     # GCP Configuration
-    gcp_project_id: str
-    firestore_namespace: str = "todoist-capacities-v1"
+    gcp_project_id: str = "todoist-notion-sync"
+    firestore_namespace: str = "todoist-notion-v1"
     default_timezone: str = "America/Los_Angeles"
 
     # Pub/Sub Configuration
@@ -27,15 +27,16 @@ class Settings(BaseSettings):
 
     # API Tokens (from Secret Manager in production, env vars in dev)
     todoist_oauth_token: str
-    capacities_api_key: str
-    internal_cron_token: str
+    notion_api_key: str
+    internal_cron_token: str = "dev-token-change-in-production"
 
-    # Capacities Configuration
-    capacities_space_id: str
+    # Notion Configuration
+    notion_tasks_database_id: str
+    notion_projects_database_id: str
 
     # API Base URLs
     todoist_api_base_url: str = "https://api.todoist.com/rest/v2"
-    capacities_api_base_url: str = "https://api.capacities.io"
+    notion_api_base_url: str = "https://api.notion.com/v1"
 
     # Rate limiting and retries
     max_retries: int = 3

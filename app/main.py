@@ -7,10 +7,10 @@ from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import ORJSONResponse
 from google.cloud import pubsub_v1
 
-from app.capacities_client import CapacitiesClient
 from app.handlers import ReconcileHandler, WebhookHandler
 from app.logging_setup import get_logger, setup_logging
 from app.models import TodoistWebhookEvent
+from app.notion_client import NotionClient
 from app.settings import settings
 from app.store import FirestoreStore
 from app.todoist_client import TodoistClient
@@ -25,7 +25,7 @@ class AppState:
     """Global application state."""
 
     todoist_client: TodoistClient
-    capacities_client: CapacitiesClient
+    notion_client: NotionClient
     store: FirestoreStore
     webhook_handler: WebhookHandler
     reconcile_handler: ReconcileHandler
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Initialize clients
     app.state.todoist_client = TodoistClient()
-    app.state.capacities_client = CapacitiesClient()
+    app.state.notion_client = NotionClient()
     
     # Initialize GCP clients (optional for local dev)
     try:
@@ -183,7 +183,7 @@ async def root(request: Request) -> Dict[str, Any]:
     """Root endpoint."""
     gcp_available = request.app.state.store is not None and request.app.state.pubsub_publisher is not None
     return {
-        "service": "Todoist-Capacities Sync",
+        "service": "Todoist-Notion Sync",
         "version": "1.0.0",
         "status": "running",
         "mode": "production" if gcp_available else "local_dev",
@@ -230,41 +230,62 @@ async def test_todoist(request: Request, show_tasks: bool = False) -> Dict[str, 
         }
 
 
-@app.get("/test/capacities")
-async def test_capacities(request: Request) -> Dict[str, Any]:
-    """Test Capacities API connection."""
+@app.get("/test/notion")
+async def test_notion(request: Request) -> Dict[str, Any]:
+    """Test Notion API connection and database access."""
     try:
-        space_info = await request.app.state.capacities_client.get_space_info()
+        # Try to query both databases to verify access
+        tasks_result = await request.app.state.notion_client.client.databases.query(
+            database_id=settings.notion_tasks_database_id,
+            page_size=1,
+        )
+        projects_result = await request.app.state.notion_client.client.databases.query(
+            database_id=settings.notion_projects_database_id,
+            page_size=1,
+        )
+        
         return {
             "status": "success",
-            "message": "Capacities API connected successfully",
-            "space_id": settings.capacities_space_id,
-            "structures": list(space_info.keys()) if isinstance(space_info, dict) else "unknown",
+            "message": "Notion API connected successfully",
+            "databases": {
+                "tasks": {
+                    "id": settings.notion_tasks_database_id,
+                    "accessible": True,
+                    "pages_found": len(tasks_result.get("results", [])),
+                },
+                "projects": {
+                    "id": settings.notion_projects_database_id,
+                    "accessible": True,
+                    "pages_found": len(projects_result.get("results", [])),
+                },
+            },
         }
     except Exception as e:
-        logger.error("Error testing Capacities API", exc_info=True)
+        logger.error("Error testing Notion API", exc_info=True)
         return {
             "status": "error",
-            "message": f"Capacities API error: {str(e)}",
+            "message": f"Notion API error: {str(e)}",
+            "error_type": type(e).__name__,
         }
 
 
 @app.get("/test/sync-task/{task_id}")
-async def test_sync_task(task_id: str, request: Request) -> Dict[str, Any]:
+async def test_sync_task(task_id: str, request: Request, dry_run: bool = True) -> Dict[str, Any]:
     """
-    Test syncing a single task (simulates the full workflow).
+    Test syncing a single task to Notion (demonstrates the full workflow).
     
     This demonstrates:
     1. Fetching task from Todoist
     2. Checking if it has @capsync label
-    3. Auto-creating project in Capacities if needed
-    4. Creating ToDo in Capacities
+    3. Auto-creating project in Notion if needed
+    4. Creating ToDo page in Notion
     
     Args:
         task_id: Todoist task ID to sync
+        dry_run: If True, only simulate. If False, actually create in Notion.
     """
     try:
-        from app.mapper import map_project_to_capacities, map_task_to_todo
+        from app.mapper import map_project_to_notion, map_task_to_todo
         from app.utils import has_capsync_label
         
         # 1. Fetch task from Todoist
@@ -276,7 +297,9 @@ async def test_sync_task(task_id: str, request: Request) -> Dict[str, Any]:
             return {
                 "status": "skipped",
                 "message": f"Task '{task.content}' does not have @capsync label",
+                "task_id": task_id,
                 "labels": task.labels,
+                "note": "Add the @capsync label to this task in Todoist to sync it",
             }
         
         # 3. Fetch related data
@@ -289,37 +312,104 @@ async def test_sync_task(task_id: str, request: Request) -> Dict[str, Any]:
             section = await request.app.state.todoist_client.get_section(task.section_id)
             section_name = section.name
         
-        # 4. Map to Capacities models
-        capacities_project = map_project_to_capacities(project)
+        # 4. Map to Notion models
+        notion_project = map_project_to_notion(project)
         todo = map_task_to_todo(task, project, comments, section_name)
         
-        # 5. Show what would be created
-        return {
-            "status": "success",
-            "message": "Task sync simulation complete",
-            "todoist_task": {
-                "id": task.id,
-                "content": task.content,
-                "project": project.name,
-                "labels": task.labels,
-            },
-            "would_create_in_capacities": {
-                "project": {
-                    "name": capacities_project.name,
-                    "todoist_project_id": capacities_project.todoist_project_id,
-                    "url": capacities_project.url,
+        # 5. Either simulate or actually create
+        if dry_run:
+            # Simulation mode - just show what would happen
+            return {
+                "status": "success",
+                "message": "Task sync simulation complete (dry run)",
+                "todoist_task": {
+                    "id": task.id,
+                    "content": task.content,
+                    "project": project.name,
+                    "labels": task.labels,
                 },
-                "todo": {
-                    "title": todo.title,
-                    "body": todo.body[:100] + "..." if len(todo.body) > 100 else todo.body,
-                    "project_name": todo.todoist_project_name,
-                    "labels": todo.todoist_labels,
-                    "priority": todo.priority,
-                    "comments_count": len(comments),
+                "would_create_in_notion": {
+                    "project_page": {
+                        "name": notion_project.name,
+                        "todoist_project_id": notion_project.todoist_project_id,
+                        "url": notion_project.url,
+                        "color": notion_project.color,
+                    },
+                    "todo_page": {
+                        "title": todo.title,
+                        "body_preview": todo.body[:100] + "..." if len(todo.body) > 100 else todo.body,
+                        "project_name": todo.todoist_project_name,
+                        "labels": todo.todoist_labels,
+                        "priority": f"P{todo.priority}",
+                        "due_date": todo.due_date,
+                        "comments_count": len(comments),
+                    },
                 },
-            },
-            "note": "In production with Firestore, this would actually create these objects in Capacities",
-        }
+                "note": "Add ?dry_run=false to actually create these pages in Notion",
+            }
+        else:
+            # Actually create in Notion
+            logger.info(f"Actually creating Notion pages for task {task_id}")
+            
+            try:
+                # 1. Check if project page already exists
+                existing_project = await request.app.state.notion_client.find_project_by_todoist_id(
+                    project.id
+                )
+                
+                if existing_project:
+                    logger.info(f"Project page already exists: {existing_project['id']}")
+                    project_page_id = existing_project["id"]
+                    project_result = {"status": "already_exists", "page_id": project_page_id}
+                else:
+                    # Create new project page
+                    logger.info(f"Creating new project page for: {project.name}")
+                    project_page = await request.app.state.notion_client.create_project_page(notion_project)
+                    project_page_id = project_page["id"]
+                    project_result = {"status": "created", "page_id": project_page_id}
+                
+                # 2. Check if todo page already exists
+                existing_todo = await request.app.state.notion_client.find_todo_by_todoist_id(task.id)
+                
+                if existing_todo:
+                    logger.info(f"Todo page already exists: {existing_todo['id']}, updating it")
+                    todo_page = await request.app.state.notion_client.update_todo_page(
+                        existing_todo["id"], todo
+                    )
+                    todo_result = {"status": "updated", "page_id": todo_page["id"]}
+                else:
+                    # Create new todo page
+                    logger.info(f"Creating new todo page: {todo.title}")
+                    todo_page = await request.app.state.notion_client.create_todo_page(
+                        todo, project_page_id
+                    )
+                    todo_result = {"status": "created", "page_id": todo_page["id"]}
+                
+                return {
+                    "status": "success",
+                    "message": "Successfully synced to Notion!",
+                    "todoist_task": {
+                        "id": task.id,
+                        "content": task.content,
+                        "project": project.name,
+                    },
+                    "notion_results": {
+                        "project": project_result,
+                        "todo": todo_result,
+                    },
+                    "notion_links": {
+                        "project_page": f"https://notion.so/{project_page_id.replace('-', '')}",
+                        "todo_page": f"https://notion.so/{todo_result['page_id'].replace('-', '')}",
+                    },
+                }
+            except Exception as create_error:
+                logger.error(f"Error creating in Notion: {create_error}", exc_info=True)
+                return {
+                    "status": "error",
+                    "message": f"Failed to create in Notion: {str(create_error)}",
+                    "error_type": type(create_error).__name__,
+                    "note": "Check the logs for detailed error. Verify your Notion database IDs and permissions.",
+                }
         
     except Exception as e:
         logger.error(f"Error testing sync for task {task_id}", exc_info=True)
