@@ -103,7 +103,7 @@ def map_project_to_capacities(project: TodoistProject) -> CapacitiesProject:
     """
     logger.info(
         "Mapping Todoist project to Capacities Project",
-        extra={"project_id": project.id, "name": project.name},
+        extra={"project_id": project.id, "project_name": project.name},
     )
 
     return CapacitiesProject(
