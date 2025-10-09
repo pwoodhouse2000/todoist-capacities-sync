@@ -195,16 +195,33 @@ async def root(request: Request) -> Dict[str, Any]:
 
 
 @app.get("/test/todoist")
-async def test_todoist(request: Request) -> Dict[str, Any]:
+async def test_todoist(request: Request, show_tasks: bool = False) -> Dict[str, Any]:
     """Test Todoist API connection."""
     try:
         projects = await request.app.state.todoist_client.get_projects()
-        return {
+        result = {
             "status": "success",
             "message": "Todoist API connected successfully",
             "project_count": len(projects),
             "projects": [{"id": p.id, "name": p.name} for p in projects[:5]],  # First 5
         }
+        
+        # Optionally show recent tasks
+        if show_tasks:
+            tasks = await request.app.state.todoist_client.get_tasks()
+            result["task_count"] = len(tasks)
+            result["recent_tasks"] = [
+                {
+                    "id": t.id,
+                    "content": t.content,
+                    "labels": t.labels,
+                    "project_id": t.project_id,
+                }
+                for t in tasks[:10]  # First 10 tasks
+            ]
+            result["note"] = "Use ?show_tasks=true to see tasks"
+        
+        return result
     except Exception as e:
         logger.error("Error testing Todoist API", exc_info=True)
         return {
