@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     )
 
     # GCP Configuration
-    gcp_project_id: str = "todoist-notion-sync"
+    gcp_project_id: str = "notion-todoist-sync-464419"
     firestore_namespace: str = "todoist-notion-v1"
     default_timezone: str = "America/Los_Angeles"
 

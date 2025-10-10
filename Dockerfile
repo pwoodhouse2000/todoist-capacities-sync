@@ -8,10 +8,11 @@ RUN pip install poetry==1.7.1
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml ./
 
-# Export dependencies to requirements.txt (for faster Docker builds)
-RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
+# Generate lock file and export to requirements.txt
+RUN poetry lock --no-update --no-interaction && \
+    poetry export -f requirements.txt --output requirements.txt --without-hashes
 
 
 # Production stage
