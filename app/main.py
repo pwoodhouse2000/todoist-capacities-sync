@@ -132,6 +132,77 @@ async def todoist_webhook(request: Request) -> Dict[str, Any]:
         )
 
 
+@app.post("/pubsub/process")
+async def process_pubsub(request: Request) -> Dict[str, Any]:
+    """
+    Process Pub/Sub push messages.
+    
+    This endpoint receives messages from Pub/Sub push subscription
+    and processes the sync jobs.
+    
+    Args:
+        request: FastAPI request object containing Pub/Sub message
+        
+    Returns:
+        Processing status
+    """
+    # Check if running in production with GCP clients
+    if not request.app.state.store:
+        return {
+            "status": "local_dev_mode",
+            "message": "Running in local dev mode without Firestore.",
+        }
+    
+    try:
+        import base64
+        import json
+        from app.pubsub_worker import SyncWorker
+        from app.models import PubSubMessage
+        
+        # Parse Pub/Sub message
+        body = await request.json()
+        if "message" not in body:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Pub/Sub message format",
+            )
+        
+        # Decode message data
+        message_data = base64.b64decode(body["message"]["data"]).decode("utf-8")
+        message_json = json.loads(message_data)
+        
+        logger.info(
+            "Received Pub/Sub message",
+            extra={"message": message_json},
+        )
+        
+        # Parse into PubSubMessage model
+        pubsub_message = PubSubMessage(**message_json)
+        
+        # Create worker and process
+        worker = SyncWorker(
+            todoist_client=request.app.state.todoist_client,
+            notion_client=request.app.state.notion_client,
+            store=request.app.state.store,
+        )
+        
+        await worker.process_message(pubsub_message)
+        
+        return {
+            "status": "success",
+            "task_id": pubsub_message.todoist_task_id,
+            "action": pubsub_message.action,
+        }
+        
+    except Exception as e:
+        logger.error("Error processing Pub/Sub message", exc_info=True)
+        # Don't raise HTTPException - Pub/Sub will retry on failure
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+
+
 @app.post("/reconcile")
 async def reconcile(
     request: Request,
