@@ -3,9 +3,9 @@
 from datetime import datetime
 from typing import Optional
 
-from app.capacities_client import CapacitiesClient
+from app.notion_client import NotionClient
 from app.logging_setup import get_logger
-from app.mapper import create_archived_todo, map_project_to_capacities, map_task_to_todo
+from app.mapper import create_archived_todo, map_project_to_notion, map_task_to_todo
 from app.models import PubSubMessage, SyncAction, SyncStatus, TaskSyncState
 from app.store import FirestoreStore
 from app.todoist_client import TodoistClient
@@ -20,7 +20,7 @@ class SyncWorker:
     def __init__(
         self,
         todoist_client: TodoistClient,
-        capacities_client: CapacitiesClient,
+        notion_client: NotionClient,
         store: FirestoreStore,
     ) -> None:
         """
@@ -28,11 +28,11 @@ class SyncWorker:
 
         Args:
             todoist_client: Todoist API client
-            capacities_client: Capacities API client
+            notion_client: Notion API client
             store: Firestore store for state management
         """
         self.todoist = todoist_client
-        self.capacities = capacities_client
+        self.notion = notion_client
         self.store = store
 
     async def process_message(self, message: PubSubMessage) -> None:
@@ -71,7 +71,7 @@ class SyncWorker:
 
     async def _handle_upsert(self, message: PubSubMessage) -> None:
         """
-        Handle UPSERT action: create or update task in Capacities.
+        Handle UPSERT action: create or update task in Notion.
 
         Args:
             message: PubSubMessage with task data
@@ -108,9 +108,9 @@ class SyncWorker:
             section = await self.todoist.get_section(task.section_id)
             section_name = section.name
 
-        # Map to Capacities models
+        # Map to Notion models
         todo = map_task_to_todo(task, project, comments, section_name)
-        capacities_project = map_project_to_capacities(project)
+        notion_project = map_project_to_notion(project)
 
         # Compute payload hash for idempotency
         payload_hash = compute_payload_hash(todo.model_dump())
@@ -126,24 +126,24 @@ class SyncWorker:
             )
             return
 
-        # Ensure project exists in Capacities
-        project_capacities_id = await self._ensure_project_exists(capacities_project)
+        # Ensure project exists in Notion
+        project_notion_id = await self._ensure_project_exists(notion_project)
 
-        # Set project relation
-        todo.project_relation_id = project_capacities_id
-
-        # Upsert task in Capacities
-        capacities_object_id = existing_state.capacities_object_id if existing_state else None
-        result = await self.capacities.upsert_todo(todo, capacities_object_id)
-
-        # Extract Capacities object ID from result
-        if not capacities_object_id:
-            capacities_object_id = result.get("id") or result.get("objectId")
+        # Upsert task in Notion
+        notion_page_id = existing_state.capacities_object_id if existing_state else None
+        
+        if notion_page_id:
+            # Update existing page
+            result = await self.notion.update_todo_page(notion_page_id, todo)
+        else:
+            # Create new page
+            result = await self.notion.create_todo_page(todo, project_notion_id)
+            notion_page_id = result.get("id")
 
         # Update sync state
         new_state = TaskSyncState(
             todoist_task_id=task_id,
-            capacities_object_id=capacities_object_id,
+            capacities_object_id=notion_page_id,  # Using same field name for compatibility
             payload_hash=payload_hash,
             last_synced_at=datetime.now(),
             sync_status=SyncStatus.OK,
@@ -151,16 +151,16 @@ class SyncWorker:
         await self.store.save_task_state(new_state)
 
         logger.info(
-            "Successfully synced task to Capacities",
+            "Successfully synced task to Notion",
             extra={
                 "task_id": task_id,
-                "capacities_id": capacities_object_id,
+                "notion_page_id": notion_page_id,
             },
         )
 
     async def _handle_archive(self, message: PubSubMessage) -> None:
         """
-        Handle ARCHIVE action: mark task as archived in Capacities.
+        Handle ARCHIVE action: archive task page in Notion.
 
         Args:
             message: PubSubMessage with task ID
@@ -176,42 +176,34 @@ class SyncWorker:
             )
             return
 
-        # Fetch task from Todoist to get current data
+        notion_page_id = existing_state.capacities_object_id
+
+        # Archive the Notion page
         try:
-            task = await self.todoist.get_task(task_id)
-            project = await self.todoist.get_project(task.project_id)
+            await self.notion.archive_page(notion_page_id)
         except Exception as e:
             logger.warning(
-                "Could not fetch task for archiving, may be deleted",
-                extra={"task_id": task_id, "error": str(e)},
+                "Could not archive Notion page",
+                extra={"task_id": task_id, "page_id": notion_page_id, "error": str(e)},
             )
-            # Mark as archived in our state
-            await self.store.mark_task_archived(task_id, "Task deleted in Todoist")
-            return
-
-        # Create archived version
-        archived_todo = create_archived_todo(task, project)
-
-        # Update in Capacities
-        await self.capacities.upsert_todo(archived_todo, existing_state.capacities_object_id)
 
         # Update sync state
         await self.store.mark_task_archived(task_id)
 
         logger.info(
-            "Successfully archived task in Capacities",
+            "Successfully archived task in Notion",
             extra={"task_id": task_id},
         )
 
-    async def _ensure_project_exists(self, project: "CapacitiesProject") -> Optional[str]:
+    async def _ensure_project_exists(self, project: "NotionProject") -> Optional[str]:
         """
-        Ensure project exists in Capacities, create if needed.
+        Ensure project exists in Notion, create if needed.
 
         Args:
-            project: CapacitiesProject model
+            project: NotionProject model
 
         Returns:
-            Capacities project object ID
+            Notion project page ID
         """
         project_id = project.todoist_project_id
 
@@ -220,31 +212,32 @@ class SyncWorker:
         if existing_state and existing_state.capacities_object_id:
             return existing_state.capacities_object_id
 
-        # Try to find it in Capacities
-        # TODO: Search for project by todoist_project_id property
-
-        # Create new project
-        result = await self.capacities.upsert_project(project)
-        capacities_object_id = result.get("id") or result.get("objectId")
+        # Try to find it in Notion
+        existing_page = await self.notion.find_project_by_todoist_id(project_id)
+        if existing_page:
+            notion_page_id = existing_page["id"]
+        else:
+            # Create new project page
+            result = await self.notion.create_project_page(project)
+            notion_page_id = result.get("id")
 
         # Save state
         from app.models import ProjectSyncState
 
         state = ProjectSyncState(
             todoist_project_id=project_id,
-            capacities_object_id=capacities_object_id,
+            capacities_object_id=notion_page_id,  # Using same field name for compatibility
             payload_hash=compute_payload_hash(project.model_dump()),
             last_synced_at=datetime.now(),
         )
         await self.store.save_project_state(state)
 
         logger.info(
-            "Created project in Capacities",
+            "Ensured project exists in Notion",
             extra={
                 "project_id": project_id,
-                "capacities_id": capacities_object_id,
+                "notion_page_id": notion_page_id,
             },
         )
 
-        return capacities_object_id
-
+        return notion_page_id

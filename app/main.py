@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         
     app.state.reconcile_handler = ReconcileHandler(
         app.state.todoist_client,
-        app.state.capacities_client,
+        app.state.notion_client,
         app.state.store,
     )
 
@@ -195,7 +195,7 @@ async def root(request: Request) -> Dict[str, Any]:
 
 
 @app.get("/test/todoist")
-async def test_todoist(request: Request, show_tasks: bool = False) -> Dict[str, Any]:
+async def test_todoist(request: Request, show_tasks: bool = False, capsync_only: bool = False) -> Dict[str, Any]:
     """Test Todoist API connection."""
     try:
         projects = await request.app.state.todoist_client.get_projects()
@@ -206,20 +206,32 @@ async def test_todoist(request: Request, show_tasks: bool = False) -> Dict[str, 
             "projects": [{"id": p.id, "name": p.name} for p in projects[:5]],  # First 5
         }
         
-        # Optionally show recent tasks
-        if show_tasks:
-            tasks = await request.app.state.todoist_client.get_tasks()
-            result["task_count"] = len(tasks)
-            result["recent_tasks"] = [
+        # Optionally show tasks
+        if show_tasks or capsync_only:
+            if capsync_only:
+                # Get only tasks with @capsync label
+                tasks = await request.app.state.todoist_client.get_active_tasks_with_label("@capsync")
+                result["message"] = "Found tasks with @capsync label"
+                result["capsync_task_count"] = len(tasks)
+            else:
+                # Get all tasks
+                tasks = await request.app.state.todoist_client.get_tasks()
+                result["task_count"] = len(tasks)
+            
+            result["tasks"] = [
                 {
                     "id": t.id,
                     "content": t.content,
                     "labels": t.labels,
                     "project_id": t.project_id,
                 }
-                for t in tasks[:10]  # First 10 tasks
+                for t in tasks[:20]  # Show up to 20 tasks
             ]
-            result["note"] = "Use ?show_tasks=true to see tasks"
+            
+            if capsync_only and len(tasks) == 0:
+                result["note"] = "No tasks with @capsync label found. Add the label to a task in Todoist!"
+            elif not capsync_only:
+                result["note"] = "Use ?capsync_only=true to see only tasks with @capsync label"
         
         return result
     except Exception as e:

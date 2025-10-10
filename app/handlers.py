@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Union
 
 from google.cloud import pubsub_v1
 
-from app.capacities_client import CapacitiesClient
+from app.notion_client import NotionClient
 from app.logging_setup import get_logger
 from app.models import PubSubMessage, SyncAction, TodoistWebhookEvent
 from app.pubsub_worker import SyncWorker
@@ -132,7 +132,7 @@ class ReconcileHandler:
     def __init__(
         self,
         todoist_client: TodoistClient,
-        capacities_client: CapacitiesClient,
+        notion_client: NotionClient,
         store: FirestoreStore,
     ) -> None:
         """
@@ -140,13 +140,13 @@ class ReconcileHandler:
 
         Args:
             todoist_client: Todoist API client
-            capacities_client: Capacities API client
+            notion_client: Notion API client
             store: Firestore store
         """
         self.todoist = todoist_client
-        self.capacities = capacities_client
+        self.notion = notion_client
         self.store = store
-        self.worker = SyncWorker(todoist_client, capacities_client, store)
+        self.worker = SyncWorker(todoist_client, notion_client, store)
 
     async def reconcile(self) -> Dict[str, Any]:
         """
