@@ -1,293 +1,469 @@
-# Deployment Guide
+# 🚀 Deployment Guide - Google Cloud Platform
 
-This guide walks you through deploying the Todoist-Capacities Sync service to Google Cloud Platform.
+**Target Platform**: Google Cloud Run  
+**Difficulty**: Intermediate  
+**Time Required**: 30-45 minutes  
+**Cost**: ~$5-10/month for typical usage
 
-## Prerequisites
+## 📋 Prerequisites
 
-- Google Cloud Platform account with billing enabled
-- [gcloud CLI](https://cloud.google.com/sdk/docs/install) installed and configured
-- [Terraform](https://www.terraform.io/downloads) >= 1.0 installed
-- [Poetry](https://python-poetry.org/docs/#installation) installed (for local development)
-- Docker installed (for building images locally)
+### Required
 
-## Step 1: Create GCP Project
+- ✅ Google Cloud Platform account with billing enabled
+- ✅ `gcloud` CLI installed ([Install guide](https://cloud.google.com/sdk/docs/install))
+- ✅ Working local setup (tested with `./test_apis.sh`)
+- ✅ Notion integration configured
+- ✅ Todoist API token
 
-1. Create a new GCP project:
-```bash
-gcloud projects create YOUR-PROJECT-ID
-gcloud config set project YOUR-PROJECT-ID
+### Recommended
+
+- Basic understanding of GCP services
+- Familiarity with Docker
+- Understanding of environment variables
+
+## 🏗️ Architecture Overview
+
+```
+Internet
+   │
+   ├──> Cloud Run (FastAPI Service)
+   │      ├──> Pub/Sub Topic (todoist-sync-jobs)
+   │      ├──> Firestore (sync state)
+   │      └──> Secret Manager (API tokens)
+   │
+   ├──> Cloud Scheduler (hourly reconciliation)
+   │
+   └──> Todoist Webhooks
 ```
 
-2. Link billing account:
-```bash
-gcloud beta billing projects link YOUR-PROJECT-ID --billing-account=YOUR-BILLING-ACCOUNT-ID
-```
+### GCP Services Used
 
-## Step 2: Enable Required APIs
+| Service | Purpose | Estimated Cost |
+|---------|---------|----------------|
+| **Cloud Run** | Hosts FastAPI application | ~$2-5/month |
+| **Pub/Sub** | Message queue for sync jobs | ~$0.50/month |
+| **Firestore** | Stores sync state | ~$1-2/month |
+| **Secret Manager** | Secures API tokens | ~$0.10/month |
+| **Cloud Scheduler** | Triggers reconciliation | ~$0.10/month |
+| **Cloud Logging** | Application logs | ~$1/month |
 
-```bash
-gcloud services enable run.googleapis.com
-gcloud services enable pubsub.googleapis.com
-gcloud services enable firestore.googleapis.com
-gcloud services enable secretmanager.googleapis.com
-gcloud services enable cloudscheduler.googleapis.com
-gcloud services enable cloudbuild.googleapis.com
-```
+**Total**: ~$5-10/month for typical usage (100-500 tasks synced daily)
 
-## Step 3: Initialize Firestore
+## 🔧 Step-by-Step Deployment
 
-Firestore must be initialized before deployment:
+### Step 1: Set Up GCP Project
 
 ```bash
-gcloud firestore databases create --region=us-central1
+# 1. Create a new GCP project
+PROJECT_ID="todoist-notion-sync"
+gcloud projects create $PROJECT_ID --name="Todoist Notion Sync"
+
+# 2. Set as active project
+gcloud config set project $PROJECT_ID
+
+# 3. Link billing account (replace with your billing account ID)
+# Find your billing account: gcloud billing accounts list
+BILLING_ACCOUNT_ID="YOUR-BILLING-ACCOUNT-ID"
+gcloud billing projects link $PROJECT_ID --billing-account=$BILLING_ACCOUNT_ID
+
+# 4. Enable required APIs
+gcloud services enable \
+    run.googleapis.com \
+    pubsub.googleapis.com \
+    firestore.googleapis.com \
+    secretmanager.googleapis.com \
+    cloudscheduler.googleapis.com \
+    cloudbuild.googleapis.com \
+    artifactregistry.googleapis.com
 ```
 
-## Step 4: Set Up Secrets
-
-Create a `.env` file with your credentials:
+### Step 2: Create Firestore Database
 
 ```bash
-cp .env.example .env
-# Edit .env with your actual credentials
+# Create Firestore in Native mode
+gcloud firestore databases create \
+    --location=us-central1 \
+    --type=firestore-native
+
+# Verify creation
+gcloud firestore databases describe --database="(default)"
 ```
 
-Then seed the secrets to GCP Secret Manager:
+### Step 3: Store Secrets
 
 ```bash
-export GCP_PROJECT_ID=YOUR-PROJECT-ID
-export TODOIST_OAUTH_TOKEN=your-todoist-token
-export CAPACITIES_API_KEY=your-capacities-key
+# 1. Create secrets
+echo -n "YOUR_TODOIST_TOKEN" | gcloud secrets create TODOIST_OAUTH_TOKEN --data-file=-
+echo -n "YOUR_NOTION_API_KEY" | gcloud secrets create NOTION_API_KEY --data-file=-
+echo -n "YOUR_TASKS_DB_ID" | gcloud secrets create NOTION_TASKS_DATABASE_ID --data-file=-
+echo -n "YOUR_PROJECTS_DB_ID" | gcloud secrets create NOTION_PROJECTS_DATABASE_ID --data-file=-
 
-./scripts/seed_secrets.sh
+# 2. Generate and store secure cron token
+CRON_TOKEN=$(openssl rand -base64 32)
+echo -n "$CRON_TOKEN" | gcloud secrets create INTERNAL_CRON_TOKEN --data-file=-
+echo "⚠️  Save this token securely: $CRON_TOKEN"
+
+# 3. Verify secrets created
+gcloud secrets list
 ```
 
-**Important:** Save the generated `INTERNAL_CRON_TOKEN` - you'll need it to trigger reconciliation.
-
-## Step 5: Build and Push Container Image
+### Step 4: Create Pub/Sub Topic and Subscription
 
 ```bash
-export GCP_PROJECT_ID=YOUR-PROJECT-ID
-export REGION=us-central1
+# 1. Create topic
+gcloud pubsub topics create todoist-sync-jobs
 
-gcloud builds submit --tag ${REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/default/todoist-capacities-sync:latest
+# 2. Create subscription
+gcloud pubsub subscriptions create todoist-sync-worker \
+    --topic=todoist-sync-jobs \
+    --ack-deadline=60 \
+    --message-retention-duration=7d
+
+# 3. Verify
+gcloud pubsub topics list
+gcloud pubsub subscriptions list
 ```
 
-## Step 6: Configure Terraform
-
-1. Copy the example tfvars:
-```bash
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars
-```
-
-2. Edit `terraform.tfvars` with your values:
-```hcl
-project_id          = "your-gcp-project-id"
-region              = "us-central1"
-image               = "us-central1-docker.pkg.dev/your-gcp-project-id/default/todoist-capacities-sync:latest"
-capacities_space_id = "your-capacities-space-id"
-```
-
-**Finding your Capacities Space ID:**
-- Open Capacities desktop app
-- Go to Settings → Space settings
-- Copy the Space ID
-
-## Step 7: Deploy with Terraform
+### Step 5: Build and Deploy Container
 
 ```bash
-cd infra/terraform
+# 1. Set up Artifact Registry
+gcloud artifacts repositories create todoist-notion \
+    --repository-format=docker \
+    --location=us-central1
 
-# Initialize Terraform
-terraform init
+# 2. Configure Docker authentication
+gcloud auth configure-docker us-central1-docker.pkg.dev
 
-# Preview changes
-terraform plan
+# 3. Build container
+PROJECT_ID=$(gcloud config get-value project)
+IMAGE_URL="us-central1-docker.pkg.dev/$PROJECT_ID/todoist-notion/sync-service:latest"
 
-# Apply infrastructure
-terraform apply
+docker build -t $IMAGE_URL .
+
+# 4. Push to Artifact Registry
+docker push $IMAGE_URL
+
+# 5. Deploy to Cloud Run
+gcloud run deploy todoist-notion-sync \
+    --image=$IMAGE_URL \
+    --platform=managed \
+    --region=us-central1 \
+    --allow-unauthenticated \
+    --memory=512Mi \
+    --cpu=1 \
+    --timeout=300 \
+    --concurrency=80 \
+    --min-instances=0 \
+    --max-instances=10 \
+    --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID" \
+    --set-secrets="TODOIST_OAUTH_TOKEN=TODOIST_OAUTH_TOKEN:latest,\
+NOTION_API_KEY=NOTION_API_KEY:latest,\
+NOTION_TASKS_DATABASE_ID=NOTION_TASKS_DATABASE_ID:latest,\
+NOTION_PROJECTS_DATABASE_ID=NOTION_PROJECTS_DATABASE_ID:latest,\
+INTERNAL_CRON_TOKEN=INTERNAL_CRON_TOKEN:latest"
+
+# 6. Get service URL
+SERVICE_URL=$(gcloud run services describe todoist-notion-sync \
+    --region=us-central1 \
+    --format='value(status.url)')
+echo "✅ Service deployed at: $SERVICE_URL"
 ```
 
-Take note of the outputs, especially `cloud_run_url` and `webhook_url`.
+### Step 6: Set Up Cloud Scheduler
 
-## Step 8: Configure Todoist Webhook
-
-1. Go to [Todoist App Settings](https://todoist.com/prefs/integrations)
-2. Click on "Webhooks" tab
-3. Add a new webhook:
-   - **URL**: `https://YOUR-CLOUD-RUN-URL/todoist/webhook` (from Terraform output)
-   - **Events**: Select:
-     - `item:added`
-     - `item:updated`
-     - `item:completed`
-     - `item:uncompleted`
-     - `item:deleted`
-     - `note:added`
-     - `note:updated`
-4. Save the webhook
-
-## Step 9: Test the Deployment
-
-### Test Health Check
 ```bash
-curl https://YOUR-CLOUD-RUN-URL/health
+# 1. Create scheduler job for reconciliation
+gcloud scheduler jobs create http todoist-reconcile \
+    --location=us-central1 \
+    --schedule="0 * * * *" \
+    --uri="$SERVICE_URL/reconcile" \
+    --http-method=POST \
+    --headers="Authorization=Bearer $CRON_TOKEN" \
+    --attempt-deadline=300s
+
+# 2. Test the job
+gcloud scheduler jobs run todoist-reconcile --location=us-central1
+
+# 3. Verify
+gcloud scheduler jobs list --location=us-central1
 ```
 
-### Test Webhook Processing
+### Step 7: Configure Todoist Webhook
+
 ```bash
-curl -X POST https://YOUR-CLOUD-RUN-URL/todoist/webhook \
-  -H "Content-Type: application/json" \
-  -d @scripts/sample_webhook.json
+# Your webhook URL
+echo "Todoist Webhook URL: $SERVICE_URL/todoist/webhook"
 ```
 
-### Create a Real Test Task
-1. In Todoist, create a new task
-2. Add the `@capsync` label
-3. Check Capacities - the task should appear within 5 seconds
-4. Check Cloud Run logs:
+1. Go to [Todoist App Management](https://developer.todoist.com/appconsole.html)
+2. Select your app or create a new one
+3. Under "Webhooks":
+   - **Callback URL**: `$SERVICE_URL/todoist/webhook`
+   - **Events**: Select `item:*` and `note:*`
+4. Save changes
+
+### Step 8: Verify Deployment
+
 ```bash
-gcloud logging read "resource.type=cloud_run_revision" \
-  --project=YOUR-PROJECT-ID \
-  --limit=50
+# 1. Check service health
+curl $SERVICE_URL/health
+
+# 2. View logs
+gcloud run services logs read todoist-notion-sync \
+    --region=us-central1 \
+    --limit=50
+
+# 3. Test sync (create a test task with capsync label in Todoist)
+# Watch logs for webhook events
+gcloud run services logs tail todoist-notion-sync \
+    --region=us-central1
 ```
 
-### Test Reconciliation
-```bash
-curl -X POST https://YOUR-CLOUD-RUN-URL/reconcile \
-  -H "Authorization: Bearer YOUR-INTERNAL-CRON-TOKEN"
-```
+## 🔍 Monitoring
 
-## Monitoring and Logs
+### View Logs
 
-### View Cloud Run Logs
 ```bash
+# Real-time logs
+gcloud run services logs tail todoist-notion-sync --region=us-central1
+
+# Recent logs with filter
 gcloud logging read \
-  "resource.type=cloud_run_revision AND resource.labels.service_name=todoist-capacities-sync" \
-  --project=YOUR-PROJECT-ID \
-  --limit=50 \
-  --format=json
+    "resource.type=cloud_run_revision AND resource.labels.service_name=todoist-notion-sync" \
+    --limit=100 \
+    --format=json
+
+# Search for errors
+gcloud logging read \
+    "resource.type=cloud_run_revision AND severity>=ERROR" \
+    --limit=50
 ```
 
-### Check Pub/Sub Queue Status
-```bash
-gcloud pubsub subscriptions describe todoist-sync-worker \
-  --project=YOUR-PROJECT-ID
-```
-
-### View Cloud Scheduler Jobs
-```bash
-gcloud scheduler jobs list --project=YOUR-PROJECT-ID
-```
-
-### Monitor Firestore Data
-```bash
-# View task sync states
-gcloud firestore documents list \
-  --collection-ids=todoist-capacities-v1_tasks \
-  --project=YOUR-PROJECT-ID
-```
-
-## Updating the Service
-
-To deploy updates:
-
-1. Build new image:
-```bash
-gcloud builds submit --tag ${REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/default/todoist-capacities-sync:v2
-```
-
-2. Update Terraform variable:
-```bash
-cd infra/terraform
-terraform apply -var="image=${REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/default/todoist-capacities-sync:v2"
-```
-
-## Troubleshooting
-
-### Webhooks Not Triggering
-
-1. Check webhook configuration in Todoist
-2. Verify Cloud Run URL is publicly accessible
-3. Check Cloud Run logs for errors:
-```bash
-gcloud logging read "resource.type=cloud_run_revision" --limit=20
-```
-
-### Tasks Not Syncing
-
-1. Ensure task has `@capsync` label
-2. Check Pub/Sub subscription for backlog:
-```bash
-gcloud pubsub subscriptions describe todoist-sync-worker
-```
-3. Check Firestore for task state
-4. Verify Capacities API key is valid
-
-### Reconciliation Not Running
-
-1. Check Cloud Scheduler job status:
-```bash
-gcloud scheduler jobs describe todoist-capacities-sync-reconcile
-```
-2. Manually trigger reconciliation to test
-3. Check Cloud Run logs for reconciliation runs
-
-### Capacities API Errors
-
-The Capacities API is in beta and endpoints may change. If you encounter API errors:
-
-1. Check the [Capacities API documentation](https://docs.capacities.io/developer/api)
-2. Review `app/capacities_client.py` and adjust endpoints/payload structure
-3. Test API calls directly using curl:
-```bash
-curl -X POST https://api.capacities.io/save-object \
-  -H "Authorization: Bearer YOUR-API-KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"spaceId":"YOUR-SPACE-ID","structureId":"...","properties":{...}}'
-```
-
-## Cost Estimation
-
-Approximate monthly costs (may vary):
-
-- **Cloud Run**: ~$5-20/month (depending on usage)
-- **Pub/Sub**: ~$1-5/month
-- **Firestore**: ~$1-10/month
-- **Secret Manager**: ~$0.50/month
-- **Cloud Scheduler**: $0.10/month per job
-
-**Total**: ~$10-40/month for light-medium usage
-
-## Security Best Practices
-
-1. **Never commit secrets** to git
-2. **Rotate API tokens** periodically
-3. **Monitor logs** for suspicious activity
-4. **Use VPC** for additional network security (optional)
-5. **Enable audit logging** for compliance
-
-## Cleanup
-
-To tear down all infrastructure:
+### Check Metrics
 
 ```bash
-cd infra/terraform
-terraform destroy
+# View in Cloud Console
+echo "Metrics: https://console.cloud.google.com/run/detail/us-central1/todoist-notion-sync/metrics?project=$PROJECT_ID"
+
+# Key metrics to monitor:
+# - Request count
+# - Request latency
+# - Error rate
+# - Instance count
+# - CPU/Memory utilization
 ```
 
-This will remove:
-- Cloud Run service
-- Pub/Sub topic and subscription
-- Cloud Scheduler job
-- Secrets (but not their values)
-- IAM bindings
+### Set Up Alerts
 
-**Note**: Firestore database and data are not automatically deleted. Delete manually if needed.
+```bash
+# Create alert for high error rate
+gcloud alpha monitoring policies create \
+    --notification-channels=YOUR_CHANNEL_ID \
+    --display-name="High Error Rate" \
+    --condition-display-name="Error rate > 5%" \
+    --condition-threshold-value=0.05 \
+    --condition-threshold-duration=300s
+```
 
-## Support
+## 🔒 Security Best Practices
 
-For issues:
-1. Check the [README](README.md)
-2. Review logs in GCP Console
-3. Create an issue on GitHub
+### 1. Service Account Permissions
 
+```bash
+# Create dedicated service account
+gcloud iam service-accounts create todoist-sync-sa \
+    --display-name="Todoist Sync Service Account"
+
+# Grant minimal permissions
+PROJECT_ID=$(gcloud config get-value project)
+SA_EMAIL="todoist-sync-sa@$PROJECT_ID.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/datastore.user"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/pubsub.publisher"
+
+# Update Cloud Run to use service account
+gcloud run services update todoist-notion-sync \
+    --service-account=$SA_EMAIL \
+    --region=us-central1
+```
+
+### 2. Restrict Access
+
+```bash
+# Remove public access (if using internal only)
+gcloud run services remove-iam-policy-binding todoist-notion-sync \
+    --member="allUsers" \
+    --role="roles/run.invoker" \
+    --region=us-central1
+
+# Add specific allowed users
+gcloud run services add-iam-policy-binding todoist-notion-sync \
+    --member="user:your-email@example.com" \
+    --role="roles/run.invoker" \
+    --region=us-central1
+```
+
+### 3. Rotate Secrets
+
+```bash
+# Add new version of secret
+echo -n "NEW_TOKEN" | gcloud secrets versions add TODOIST_OAUTH_TOKEN --data-file=-
+
+# Cloud Run will use latest version automatically
+# Verify
+gcloud secrets versions list TODOIST_OAUTH_TOKEN
+```
+
+## 💰 Cost Optimization
+
+### 1. Adjust Cloud Run Settings
+
+```bash
+# Reduce min instances to 0 (cold starts OK)
+# Reduce memory if usage is low
+gcloud run services update todoist-notion-sync \
+    --min-instances=0 \
+    --memory=256Mi \
+    --region=us-central1
+```
+
+### 2. Set Budget Alerts
+
+```bash
+# Create budget alert
+gcloud billing budgets create \
+    --billing-account=$BILLING_ACCOUNT_ID \
+    --display-name="Todoist Sync Budget" \
+    --budget-amount=10USD \
+    --threshold-rule=percent=50 \
+    --threshold-rule=percent=90 \
+    --threshold-rule=percent=100
+```
+
+### 3. Monitor Costs
+
+- Visit [GCP Billing](https://console.cloud.google.com/billing)
+- Review cost breakdown by service
+- Set up cost anomaly alerts
+
+## 🔄 Updates and Maintenance
+
+### Deploy New Version
+
+```bash
+# 1. Pull latest code
+git pull origin main
+
+# 2. Rebuild and push
+docker build -t $IMAGE_URL .
+docker push $IMAGE_URL
+
+# 3. Deploy update
+gcloud run services update todoist-notion-sync \
+    --image=$IMAGE_URL \
+    --region=us-central1
+
+# 4. Verify
+curl $SERVICE_URL/health
+```
+
+### Rollback
+
+```bash
+# List revisions
+gcloud run revisions list --service=todoist-notion-sync --region=us-central1
+
+# Rollback to previous revision
+gcloud run services update-traffic todoist-notion-sync \
+    --to-revisions=REVISION_NAME=100 \
+    --region=us-central1
+```
+
+## 🧪 Testing Production
+
+```bash
+# 1. Test health endpoint
+curl $SERVICE_URL/health
+
+# 2. Test reconciliation (requires token)
+curl -X POST $SERVICE_URL/reconcile \
+    -H "Authorization: Bearer $CRON_TOKEN"
+
+# 3. Create test task in Todoist with capsync label
+# Watch logs for webhook processing
+gcloud run services logs tail todoist-notion-sync --region=us-central1
+```
+
+## 🐛 Troubleshooting
+
+### Service Won't Start
+
+```bash
+# Check logs
+gcloud run services logs read todoist-notion-sync --region=us-central1 --limit=50
+
+# Common issues:
+# - Missing secrets
+# - Invalid environment variables
+# - Container build errors
+```
+
+### Webhooks Not Working
+
+```bash
+# 1. Verify webhook URL in Todoist
+# 2. Check Cloud Run allows unauthenticated access
+gcloud run services get-iam-policy todoist-notion-sync --region=us-central1
+
+# 3. Check logs for incoming requests
+gcloud run services logs tail todoist-notion-sync --region=us-central1 | grep webhook
+```
+
+### High Costs
+
+```bash
+# Check request counts
+gcloud monitoring time-series list \
+    --filter='metric.type="run.googleapis.com/request_count"'
+
+# Reduce resources if underutilized
+gcloud run services update todoist-notion-sync \
+    --memory=256Mi \
+    --max-instances=5 \
+    --region=us-central1
+```
+
+## 📚 Additional Resources
+
+- [Cloud Run Documentation](https://cloud.google.com/run/docs)
+- [Pub/Sub Best Practices](https://cloud.google.com/pubsub/docs/best-practices)
+- [Firestore Pricing](https://cloud.google.com/firestore/pricing)
+- [Secret Manager Guide](https://cloud.google.com/secret-manager/docs)
+
+## ✅ Deployment Checklist
+
+- ✅ GCP project created and billing enabled
+- ✅ All required APIs enabled
+- ✅ Firestore database created
+- ✅ Secrets stored in Secret Manager
+- ✅ Pub/Sub topic and subscription created
+- ✅ Container built and pushed
+- ✅ Cloud Run service deployed
+- ✅ Cloud Scheduler job configured
+- ✅ Todoist webhook configured
+- ✅ Service health verified
+- ✅ Test task synced successfully
+- ✅ Monitoring and alerts set up
+- ✅ Budget alerts configured
+
+**Your production deployment is complete!** 🎉
+
+Tasks will now sync automatically when:
+- Webhooks fire from Todoist (real-time)
+- Hourly reconciliation runs (catch-up)

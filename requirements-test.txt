@@ -1,0 +1,17 @@
+# Testing dependencies for Todoist-Notion Sync
+
+# Core testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.1
+
+# Code quality
+ruff>=0.1.0
+mypy>=1.5.0
+black>=23.7.0
+
+# Testing utilities
+responses>=0.23.0
+httpx>=0.24.0
+

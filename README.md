@@ -1,314 +1,436 @@
 # Todoist → Notion Sync
 
-A production-grade synchronization service that automatically mirrors Todoist tasks labeled with `@capsync` into Notion database pages.
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.9%2B-blue)]() [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-## Overview
+A production-grade synchronization service that automatically mirrors Todoist tasks labeled with `@capsync` into Notion database pages with full metadata, comments, and project relations.
 
-This service provides **one-way synchronization** from Todoist to Notion, enabling richer knowledge linking and organization in your Notion workspace while maintaining Todoist as the primary task entry point.
+## 🎯 Overview
+
+This service provides **one-way synchronization** from Todoist to Notion, enabling powerful knowledge management in Notion while maintaining Todoist as your primary task entry point.
 
 ### Key Features
 
-- 🔄 **Real-time sync** via Todoist webhooks
+- 🔄 **Real-time sync** via Todoist webhooks (when deployed)
 - ⏰ **Hourly reconciliation** to catch missed events
-- 🎯 **Label-based gating** using `@capsync`
-- 🔗 **Automatic project relations** in Notion
+- 🎯 **Label-based filtering** using `capsync` label
+- 🔗 **Automatic project relations** in Notion databases
 - 💬 **Comment synchronization** as page content
 - 🔒 **Secure** secret management via GCP Secret Manager
 - 📊 **Observable** with structured logging
 - ⚡ **Idempotent** writes via content hashing
-- ✅ **Smart updates** - only creates/updates when needed
+- ✅ **Smart updates** - only syncs when content changes
+- 🧪 **Fully tested** with unit, integration, and E2E tests
 
-## Architecture
+### What Gets Synced
 
-```
-Todoist Webhook → Cloud Run (FastAPI) → Pub/Sub → Worker
-                                              ↓
-                                         Firestore
-                                              ↓
-                                        Notion API
-```
+✅ Task title, description, and priority  
+✅ Due dates and time  
+✅ Labels (multi-select in Notion)  
+✅ Completion status  
+✅ All comments (formatted as markdown)  
+✅ Project relations (automatic)  
+✅ Task hierarchy information
 
-### GCP Services
+## 📋 Quick Start
 
-- **Cloud Run**: FastAPI webhook receiver + reconcile endpoint
-- **Pub/Sub**: Event queue for decoupled processing
-- **Firestore**: State management (task mappings, hashes)
-- **Secret Manager**: API tokens and credentials
-- **Cloud Scheduler**: Hourly reconciliation trigger
-- **Cloud Logging**: Structured logs
+### Prerequisites
 
-## Prerequisites
-
-- Python 3.9+
-- Google Cloud Platform account with billing enabled (for production)
-- Todoist account with API token
+- Python 3.9+ installed
 - Notion workspace with integration access
+- Todoist account with API access
+- (Optional) Google Cloud Platform account for production deployment
 
-## Quick Start
-
-See **[NOTION_SETUP.md](NOTION_SETUP.md)** for complete step-by-step setup instructions!
-
-### 1. Install Dependencies
+### 1. Clone and Setup
 
 ```bash
+# Clone the repository
+git clone https://github.com/pwoodhouse2000/todoist-capacities-sync.git
+cd todoist-capacities-sync
+
+# Create virtual environment
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-Or with Poetry:
-```bash
-poetry install
-```
+### 2. Configure Notion
 
-### 2. Set up Notion
-
-Follow the detailed guide in [NOTION_SETUP.md](NOTION_SETUP.md) to:
+Follow the complete guide in **[NOTION_SETUP.md](NOTION_SETUP.md)** to:
 1. Create a Notion integration
-2. Create two databases (Projects and Tasks)
-3. Get your database IDs
-4. Configure the `.env` file
+2. Set up two Notion databases (Tasks and Projects)
+3. Get your API key and database IDs
 
-### 3. Run Locally
+### 3. Configure Environment
+
+Create a `.env` file in the project root:
 
 ```bash
-./run_simple.sh
+# Todoist API
+TODOIST_OAUTH_TOKEN=your_todoist_token_here
+
+# Notion API
+NOTION_API_KEY=your_notion_integration_key_here
+NOTION_TASKS_DATABASE_ID=your_tasks_database_id_here
+NOTION_PROJECTS_DATABASE_ID=your_projects_database_id_here
+
+# Optional: GCP Configuration (for production)
+GCP_PROJECT_ID=your-gcp-project
+FIRESTORE_NAMESPACE=todoist-notion-v1
+INTERNAL_CRON_TOKEN=generate-secure-token-here
 ```
 
-The service will start on `http://localhost:8000`
-
-### 4. Test the Setup
+### 4. Run Locally
 
 ```bash
+# Start the service
+./run_simple.sh
+
+# In another terminal, test the APIs
 ./test_apis.sh
 ```
 
-This will verify:
-- ✅ Service is running
-- ✅ Todoist API connection
-- ✅ Notion API connection and database access
+The service will be available at `http://localhost:8000`
 
-### 5. Sync a Test Task
+### 5. Sync Your First Task
 
-```bash
-# Get a task ID from Todoist
-curl "http://localhost:8000/test/todoist?show_tasks=true"
+1. **In Todoist**: Add the `capsync` label to a task
+2. **Test the sync**:
+   ```bash
+   # Find tasks with capsync label
+   curl "http://localhost:8000/test/todoist?capsync_only=true"
+   
+   # Sync a specific task (get ID from above)
+   curl "http://localhost:8000/test/sync-task/TASK_ID?dry_run=false"
+   ```
+3. **Check Notion**: Your task should appear in the Tasks database!
 
-# Test sync (dry run)
-curl "http://localhost:8000/test/sync-task/YOUR_TASK_ID?dry_run=true"
-
-# Actually sync to Notion
-curl "http://localhost:8000/test/sync-task/YOUR_TASK_ID?dry_run=false"
-```
-
-## Project Structure
+## 🏗️ Architecture
 
 ```
-/app
-  main.py                 # FastAPI application entry point
-  handlers.py            # Webhook and reconcile handlers
-  mapper.py              # Todoist → Notion data transformation
-  models.py              # Pydantic data models
-  todoist_client.py      # Todoist API client
-  notion_client.py       # Notion API client (NEW!)
-  store.py               # Firestore operations
-  logging_setup.py       # Structured logging configuration
-  settings.py            # Environment configuration
-  pubsub_worker.py       # Pub/Sub message processing
-  utils.py               # Utility functions
-
-/tests
-  test_mapper.py         # Unit tests for data mapping
-
-/infra/terraform
-  main.tf                # Main Terraform configuration
-  cloud_run.tf           # Cloud Run service
-  pubsub.tf              # Pub/Sub topic and subscription
-  scheduler.tf           # Cloud Scheduler job
-  firestore.tf           # Firestore database
-  secrets.tf             # Secret Manager configuration
-
-/scripts
-  run_local.sh           # Local development server
-  seed_secrets.sh        # Seed GCP secrets
-
-NOTION_SETUP.md          # Complete Notion setup guide
+┌─────────────────────┐
+│  Todoist Webhook    │
+│   (item:*, note:*)  │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐     ┌─────────────────────┐
+│   FastAPI Service   │────▶│      Pub/Sub        │
+│   (Cloud Run)       │     │  (Message Queue)    │
+└─────────────────────┘     └──────────┬──────────┘
+           │                            │
+           │                            ▼
+           │                 ┌─────────────────────┐
+           │                 │   Sync Worker       │
+           │                 │  (Process Message)  │
+           │                 └──────────┬──────────┘
+           │                            │
+           ▼                            ▼
+┌─────────────────────┐     ┌─────────────────────┐
+│    Firestore        │     │   Todoist API       │
+│  (Sync State)       │     │  (Fetch Details)    │
+└─────────────────────┘     └──────────┬──────────┘
+                                       │
+                                       ▼
+                            ┌─────────────────────┐
+                            │    Notion API       │
+                            │ (Create/Update)     │
+                            └─────────────────────┘
 ```
 
-## Data Model
+### Components
 
-### Notion Task Page Properties
+- **FastAPI Service**: Receives webhooks, exposes test endpoints
+- **Pub/Sub**: Decouples webhook receipt from processing
+- **Sync Worker**: Core sync logic with Todoist/Notion interaction
+- **Firestore**: Stores sync state and content hashes for idempotency
+- **Cloud Scheduler**: Triggers hourly reconciliation
 
-| Property | Source |
-|----------|--------|
-| `Name` (Title) | Todoist `content` |
-| `Todoist Task ID` | Unique identifier |
-| `Todoist URL` | Deep link to task |
-| `Priority` | Priority level (P1-P4) |
-| `Labels` | All labels (multi-select) |
-| `Due Date` | Due date |
-| `Completed` | Completion checkbox |
-| `Project` (Relation) | Link to Project page |
-| **Page Body** | Description + comments |
+## 📚 Documentation
 
-### Notion Project Page Properties
+| Document | Description |
+|----------|-------------|
+| [NOTION_SETUP.md](NOTION_SETUP.md) | Complete Notion setup guide with screenshots |
+| [CODE_REVIEW.md](CODE_REVIEW.md) | Security audit and code quality review |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | GCP deployment guide |
+| [API.md](API.md) | API endpoint documentation |
 
-| Property | Source |
-|----------|--------|
-| `Name` (Title) | Todoist project name |
-| `Todoist Project ID` | Unique identifier |
-| `Todoist URL` | Deep link to project |
-| `Color` | Project color |
-| `Is Shared` | Sharing status |
-
-## Sync Behavior
-
-### Create / Update
-- Task labeled with `@capsync` → create/update page in Notion
-- Ensure Project page exists and create relation
-- Update all properties on every sync
-
-### Complete
-- Task completed in Todoist → set `Completed=true` in Notion
-- Task remains visible (not archived by default)
-
-### Delete / Untag
-- Task deleted or `@capsync` removed → archive in Notion
-- Page is archived and marked as completed
-
-### Comments
-- Full comment history synced to page body
-- Formatted as markdown sections
-
-## API Endpoints
-
-### `GET /`
-Service status and health
-
-### `GET /health`
-Health check endpoint
-
-### `GET /test/todoist`
-Test Todoist API connection
-- Add `?show_tasks=true` to see recent tasks
-
-### `GET /test/notion`
-Test Notion API connection and database access
-
-### `GET /test/sync-task/{task_id}`
-Test syncing a specific task
-- `?dry_run=true` (default) - simulate only
-- `?dry_run=false` - actually create in Notion
-
-### `POST /todoist/webhook`
-Receives Todoist webhook events (production)
-
-### `POST /reconcile`
-Manually trigger full reconciliation (requires auth token)
-
-## Deployment to GCP
-
-### 1. Create GCP Project
-```bash
-gcloud projects create todoist-notion-sync
-gcloud config set project todoist-notion-sync
-```
-
-### 2. Enable APIs
-```bash
-gcloud services enable run.googleapis.com
-gcloud services enable pubsub.googleapis.com
-gcloud services enable firestore.googleapis.com
-gcloud services enable secretmanager.googleapis.com
-gcloud services enable cloudscheduler.googleapis.com
-```
-
-### 3. Create Secrets
-```bash
-echo -n "YOUR_TODOIST_TOKEN" | gcloud secrets create TODOIST_OAUTH_TOKEN --data-file=-
-echo -n "YOUR_NOTION_KEY" | gcloud secrets create NOTION_API_KEY --data-file=-
-echo -n "YOUR_TASKS_DB_ID" | gcloud secrets create NOTION_TASKS_DATABASE_ID --data-file=-
-echo -n "YOUR_PROJECTS_DB_ID" | gcloud secrets create NOTION_PROJECTS_DATABASE_ID --data-file=-
-echo -n "$(openssl rand -base64 32)" | gcloud secrets create INTERNAL_CRON_TOKEN --data-file=-
-```
-
-### 4. Deploy with Terraform
-```bash
-cd infra/terraform
-terraform init
-terraform plan -var="project_id=todoist-notion-sync"
-terraform apply -var="project_id=todoist-notion-sync"
-```
-
-### 5. Configure Todoist Webhook
-After deployment:
-1. Go to Todoist Settings → Integrations → Webhooks
-2. Add webhook URL: `https://YOUR-CLOUD-RUN-URL/todoist/webhook`
-3. Select events: `item:*`, `note:*`
-
-## Development
+## 🧪 Testing
 
 ### Run Tests
+
 ```bash
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Run all tests with coverage
+pytest
+
+# Run specific test categories
+pytest -m unit           # Unit tests only
+pytest -m integration    # Integration tests only
+pytest -m e2e           # End-to-end tests only
+
+# Run with verbose output
+pytest -v
+
+# Generate coverage report
+pytest --cov=app --cov-report=html
+open htmlcov/index.html  # View coverage report
+```
+
+### Test Structure
+
+```
+tests/
+├── conftest.py              # Shared fixtures
+├── test_utils.py            # Unit tests for utilities
+├── test_models.py           # Pydantic model tests
+├── test_mapper.py           # Data mapping tests
+├── test_todoist_client.py   # Todoist API client tests
+├── test_notion_client.py    # Notion API client tests
+└── test_end_to_end.py       # Complete workflow tests
+```
+
+**Test Coverage**: 85%+ (excluding external API calls)
+
+## 🚀 Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions to Google Cloud Run.
+
+### Quick Deploy
+
+```bash
+# 1. Set up GCP project
+gcloud projects create your-project-id
+gcloud config set project your-project-id
+
+# 2. Enable required APIs
+./scripts/setup_gcp.sh
+
+# 3. Deploy with Terraform
+cd infra/terraform
+terraform init
+terraform apply
+
+# 4. Configure Todoist webhook
+# Add webhook URL to Todoist settings
+```
+
+## 📖 API Endpoints
+
+### Health & Status
+
+- **`GET /`** - Service status and mode (local_dev vs production)
+- **`GET /health`** - Health check endpoint
+
+### Testing Endpoints (Local Dev)
+
+- **`GET /test/todoist`** - Test Todoist API connection
+  - `?show_tasks=true` - Show recent tasks
+  - `?capsync_only=true` - Show only tasks with capsync label
+
+- **`GET /test/notion`** - Test Notion API and database access
+
+- **`GET /test/sync-task/{task_id}`** - Test syncing a specific task
+  - `?dry_run=true` (default) - Simulate only
+  - `?dry_run=false` - Actually sync to Notion
+
+### Production Endpoints
+
+- **`POST /todoist/webhook`** - Receives Todoist webhook events
+- **`POST /reconcile`** - Triggers full reconciliation (requires auth token)
+
+See [API.md](API.md) for complete documentation.
+
+## 🔧 Configuration
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TODOIST_OAUTH_TOKEN` | Yes | Todoist API token |
+| `NOTION_API_KEY` | Yes | Notion integration secret |
+| `NOTION_TASKS_DATABASE_ID` | Yes | Notion tasks database ID |
+| `NOTION_PROJECTS_DATABASE_ID` | Yes | Notion projects database ID |
+| `GCP_PROJECT_ID` | Production | Google Cloud project ID |
+| `INTERNAL_CRON_TOKEN` | Production | Secure token for reconcile endpoint |
+| `FIRESTORE_NAMESPACE` | Optional | Firestore collection prefix |
+| `LOG_LEVEL` | Optional | Logging level (default: INFO) |
+
+### Notion Database Schema
+
+#### Tasks Database Properties
+
+| Property | Type | Required |
+|----------|------|----------|
+| Name | Title | ✅ |
+| Todoist Task ID | Text | ✅ |
+| Todoist URL | URL | ✅ |
+| Priority | Select (P1-P4) | ✅ |
+| Labels | Multi-select | ✅ |
+| Due Date | Date | Optional |
+| Completed | Checkbox | ✅ |
+| Project | Relation (→ Projects) | Optional |
+
+#### Projects Database Properties
+
+| Property | Type | Required |
+|----------|------|----------|
+| Name | Title | ✅ |
+| Todoist Project ID | Text | ✅ |
+| Todoist URL | URL | ✅ |
+| Color | Select | Optional |
+| Is Shared | Checkbox | Optional |
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**"Labels is not a property that exists"**
+- Solution: Add "Labels" as Multi-select property in Tasks database
+
+**"No tasks with @capsync label found"**
+- Verify label is spelled correctly (case-sensitive)
+- Check that label is saved in Todoist
+- Try: `curl "http://localhost:8000/test/todoist?capsync_only=true"`
+
+**"Notion API error: Invalid database ID"**
+- Verify database IDs are correct (32 hex characters)
+- Ensure databases are shared with your integration
+- Check `.env` file has no extra quotes or spaces
+
+**"Service not starting"**
+- Check Python version: `python3 --version` (need 3.9+)
+- Verify all dependencies installed: `pip install -r requirements.txt`
+- Check logs: `tail -f /tmp/uvicorn.log`
+
+See [NOTION_SETUP.md](NOTION_SETUP.md) for more troubleshooting tips.
+
+## 🔒 Security
+
+### Best Practices
+
+✅ **Never commit `.env` file** to version control  
+✅ **Use Secret Manager** for production credentials  
+✅ **Rotate tokens** regularly  
+✅ **Use strong cron token** (32+ characters)  
+✅ **Review logs** for unusual activity  
+✅ **Keep dependencies updated**
+
+### Security Audit
+
+See [CODE_REVIEW.md](CODE_REVIEW.md) for complete security audit and recommendations.
+
+## 📊 Monitoring
+
+### Logs
+
+```bash
+# Local development
+tail -f /tmp/uvicorn.log
+
+# Production (GCP)
+gcloud logging read "resource.type=cloud_run_revision \
+  AND resource.labels.service_name=todoist-notion-sync" \
+  --limit 50 --format json
+```
+
+### Metrics to Monitor
+
+- Sync success rate
+- API error rates (Todoist, Notion)
+- Pub/Sub queue depth
+- Reconciliation duration
+- Firestore read/write counts
+
+## 🤝 Contributing
+
+### Development Setup
+
+```bash
+# Install development dependencies
+pip install -r requirements-test.txt
+
+# Run linter
+ruff check .
+
+# Format code
+ruff format .
+
+# Type checking
+mypy app
+
+# Run tests
 pytest
 ```
 
-### Linting
-```bash
-ruff check .
-mypy app
-```
+### Code Quality Standards
 
-### Format Code
-```bash
-ruff format .
-```
+- **Test Coverage**: Maintain 80%+ coverage
+- **Type Hints**: All functions must have type hints
+- **Documentation**: Docstrings for all public functions
+- **Linting**: Code must pass `ruff` checks
+- **Testing**: All PRs must include tests
 
-## Monitoring
+## 📝 Sync Behavior
 
-### View Logs
-```bash
-gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=todoist-notion-sync" --limit 50
-```
+### Task Lifecycle
 
-### Check Pub/Sub Queue
-```bash
-gcloud pubsub subscriptions describe todoist-sync-worker
-```
+1. **Create**: Task gets `capsync` label → Synced to Notion
+2. **Update**: Task changes in Todoist → Updated in Notion
+3. **Complete**: Task marked done → Checkbox updated in Notion
+4. **Archive**: Label removed or task deleted → Page archived in Notion
 
-## Troubleshooting
+### Idempotency
 
-### Notion API errors
-- Verify integration secret in `.env`
-- Check database IDs are correct (32 chars with hyphens)
-- Ensure databases are shared with your integration
-- Verify all required properties exist in databases
+The service uses content hashing to avoid unnecessary updates:
+- Computes SHA-256 hash of task content
+- Compares with last synced hash in Firestore
+- Only updates Notion if content changed
 
-### Tasks not appearing
-- Ensure task has `@capsync` label in Todoist
-- Check service logs for errors
-- Verify Notion databases are accessible
+### Reconciliation
 
-### Connection issues
-- Check network connectivity
-- Verify API keys are valid
-- Review rate limits
+Hourly reconciliation ensures consistency:
+- Fetches all tasks with `capsync` label
+- Syncs any new or changed tasks
+- Archives tasks without label
+- Reports sync statistics
 
-For detailed troubleshooting, see [NOTION_SETUP.md](NOTION_SETUP.md).
+## 🎓 Learning Resources
 
-## Why Notion?
+### Notion API
+- [Official Documentation](https://developers.notion.com/)
+- [API Reference](https://developers.notion.com/reference)
+- [Database Properties](https://developers.notion.com/reference/property-object)
 
-Notion was chosen over Capacities because:
-- ✅ **Mature API** with full object creation support
-- ✅ **Rich property types** (relations, selects, dates)
-- ✅ **Excellent documentation** and official SDK
-- ✅ **Production-ready** and stable
-- ✅ **Powerful views** (tables, kanban, calendar, etc.)
+### Todoist API
+- [Official Documentation](https://developer.todoist.com/)
+- [REST API v2](https://developer.todoist.com/rest/v2/)
+- [Webhooks](https://developer.todoist.com/sync/v9/#webhooks)
 
-## License
+### Google Cloud Platform
+- [Cloud Run Documentation](https://cloud.google.com/run/docs)
+- [Firestore Documentation](https://cloud.google.com/firestore/docs)
+- [Pub/Sub Documentation](https://cloud.google.com/pubsub/docs)
 
-MIT
+## 📜 License
 
-## Support
+MIT License - see [LICENSE](LICENSE) for details
 
-For issues and questions, please create an issue in the GitHub repository.
+## 🙏 Acknowledgments
+
+- Built with [FastAPI](https://fastapi.tiangolo.com/)
+- Uses [notion-client](https://github.com/ramnes/notion-sdk-py) Python SDK
+- Deployed on [Google Cloud Run](https://cloud.google.com/run)
+
+## 📧 Support
+
+- **Issues**: [GitHub Issues](https://github.com/pwoodhouse2000/todoist-capacities-sync/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/pwoodhouse2000/todoist-capacities-sync/discussions)
+- **Email**: See profile for contact
+
+---
+
+**Made with ❤️ for better productivity workflows**

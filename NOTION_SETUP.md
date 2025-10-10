@@ -1,8 +1,12 @@
 # 🔄 Todoist → Notion Sync Setup Guide
 
+**Last Updated**: October 2025  
+**Difficulty**: Beginner  
+**Time Required**: 10-15 minutes
+
 ## 📋 Overview
 
-This service now syncs your Todoist tasks (with the `@capsync` label) to Notion databases! The migration from Capacities to Notion is complete.
+This service syncs your Todoist tasks (with the `capsync` label) to Notion databases automatically. This guide will walk you through the complete setup process with detailed instructions and common pitfalls to avoid.
 
 ## 🚀 Quick Setup (5 Steps)
 
@@ -188,19 +192,197 @@ Once testing works:
 
 All the infrastructure code is already in place - just needs GCP setup!
 
-## 🆘 Need Help?
+## 🆘 Troubleshooting
 
-- Check the logs: `tail -f /tmp/uvicorn.log`
-- Test individual components using the `/test/*` endpoints
-- Verify all credentials and IDs are correct
+### Common Issues & Solutions
 
-## 🎉 Success!
+#### Issue: "Labels is not a property that exists"
+**Cause**: Property name mismatch or missing property  
+**Solution**:
+1. Open your Tasks database in Notion
+2. Check the property is named exactly "Labels" (case-sensitive)
+3. Verify it's type "Multi-select"
+4. If it's named "Label" (singular), rename it to "Labels"
 
-Once you see your Todoist tasks appearing in Notion, you're all set! The architecture is designed for:
-- ✅ Real-time sync via webhooks
-- ✅ Automatic project creation
-- ✅ Conflict resolution (updates existing pages)
-- ✅ Scalable cloud deployment
+#### Issue: "No tasks with @capsync label found"
+**Cause**: Label not saved or misspelled  
+**Solutions**:
+- Label is case-sensitive: use `capsync` not `Capsync`
+- Don't include @ symbol when creating the label in Todoist
+- Verify label is saved (refresh Todoist)
+- Check using: `curl "http://localhost:8000/test/todoist?capsync_only=true"`
 
-Enjoy your new Todoist ↔ Notion sync! 🚀
+#### Issue: "Integration doesn't have access"
+**Cause**: Databases not shared with integration  
+**Solution**:
+1. Open each database in Notion
+2. Click "•••" menu → "Connections"
+3. Find your integration and click to connect
+4. Verify with: `curl "http://localhost:8000/test/notion"`
+
+#### Issue: "Invalid database ID format"
+**Cause**: Database ID includes URL parameters  
+**Solution**:
+- Database ID should be 32 hex characters: `28789c4a21dd80db9edcfe4ffb342bfb`
+- Remove any `?` or `&` and everything after them
+- Remove hyphens if present
+
+#### Issue: Task synced but missing content
+**Cause**: Property type mismatch  
+**Solution**:
+- Verify all properties match the exact types specified
+- "Todoist Task ID" must be "Text" not "Number"
+- "Project" must be "Relation" linking to Projects database
+
+## 📚 Lessons Learned
+
+### Best Practices
+
+1. **Label Naming**
+   - Use lowercase: `capsync` not `@capsync` or `Capsync`
+   - The @ symbol is only for our documentation
+   - Todoist labels are case-sensitive
+
+2. **Property Names**
+   - Match names exactly (case-sensitive)
+   - Use plural "Labels" not singular "Label"
+   - Don't use special characters in property names
+
+3. **Database Setup Order**
+   - Create Projects database first
+   - Then create Tasks database
+   - Add "Project" relation last (needs Projects to exist)
+
+4. **Testing Flow**
+   - Test API connections first (`./test_apis.sh`)
+   - Do a dry run before real sync
+   - Start with one simple task
+   - Check Notion immediately after sync
+
+5. **Common Mistakes to Avoid**
+   - ❌ Not sharing databases with integration
+   - ❌ Using full database URLs instead of IDs
+   - ❌ Creating label with @ symbol in Todoist
+   - ❌ Misspelling property names
+   - ❌ Using wrong property types (Text vs Number)
+
+### Performance Tips
+
+1. **For Many Tasks**
+   - Sync a few tasks first to verify setup
+   - Then add label to more tasks in batches
+   - Use filters in Todoist to add labels in bulk
+
+2. **Notion Views**
+   - Create filtered views for active tasks
+   - Use calendar view for tasks with due dates
+   - Create kanban by priority or project
+
+3. **Organization**
+   - Use Notion's relation property to link tasks to projects
+   - Create rollups in Projects to see task counts
+   - Add formulas for task completion percentages
+
+## 🎯 Next Steps
+
+Once setup is complete:
+
+### 1. **Test the Sync**
+```bash
+# Start the service
+./run_simple.sh
+
+# Test APIs
+./test_apis.sh
+
+# Find a task with capsync label
+curl "http://localhost:8000/test/todoist?capsync_only=true"
+
+# Sync it to Notion
+curl "http://localhost:8000/test/sync-task/TASK_ID?dry_run=false"
+```
+
+### 2. **Deploy to Production** (Optional)
+See [DEPLOYMENT.md](DEPLOYMENT.md) for deploying to Google Cloud Run for:
+- Automatic webhook-based sync
+- Hourly reconciliation
+- Scalable infrastructure
+
+### 3. **Customize Your Notion Databases**
+- Add custom properties for your workflow
+- Create filtered views and templates
+- Set up relations to other databases
+
+## 🔄 Updating the Integration
+
+If you need to change configuration:
+
+1. **Update Environment Variables**
+   ```bash
+   # Edit .env file
+   nano .env
+   
+   # Restart service
+   pkill -f uvicorn
+   ./run_simple.sh
+   ```
+
+2. **Test Changes**
+   ```bash
+   ./test_apis.sh
+   ```
+
+3. **Verify Sync Still Works**
+   ```bash
+   curl "http://localhost:8000/test/sync-task/TASK_ID?dry_run=true"
+   ```
+
+## 📞 Getting Help
+
+If you encounter issues:
+
+1. **Check Logs**
+   ```bash
+   tail -f /tmp/uvicorn.log
+   ```
+
+2. **Verify Configuration**
+   ```bash
+   # Test Todoist connection
+   curl "http://localhost:8000/test/todoist"
+   
+   # Test Notion connection
+   curl "http://localhost:8000/test/notion"
+   ```
+
+3. **Review Documentation**
+   - [CODE_REVIEW.md](CODE_REVIEW.md) - Security and best practices
+   - [API.md](API.md) - API endpoint documentation
+   - [DEPLOYMENT.md](DEPLOYMENT.md) - Production deployment
+
+4. **Open an Issue**
+   - [GitHub Issues](https://github.com/pwoodhouse2000/todoist-capacities-sync/issues)
+   - Include error messages and logs
+   - Describe what you've already tried
+
+## 🎉 Success Checklist
+
+- ✅ Notion integration created
+- ✅ Two databases created with correct properties
+- ✅ Databases shared with integration
+- ✅ Database IDs added to `.env`
+- ✅ Service starts without errors
+- ✅ Both API tests pass
+- ✅ Test task synced successfully
+- ✅ Task visible in Notion with all data
+
+**Congratulations! Your Todoist → Notion sync is fully operational!** 🚀
+
+Now you can:
+- Add `capsync` label to any Todoist task to sync it
+- Edit tasks in Todoist and they'll update in Notion
+- Use Notion's powerful views and relations
+- Keep Todoist as your task entry point
+
+Enjoy your enhanced productivity workflow! 💪
 
