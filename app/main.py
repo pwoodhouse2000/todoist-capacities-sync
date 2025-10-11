@@ -173,7 +173,7 @@ async def process_pubsub(request: Request) -> Dict[str, Any]:
         
         logger.info(
             "Received Pub/Sub message",
-            extra={"message": message_json},
+            extra={"pubsub_data": message_json},
         )
         
         # Parse into PubSubMessage model
@@ -249,6 +249,82 @@ async def reconcile(
         )
 
 
+@app.post("/admin/reset-sync")
+async def reset_sync(
+    request: Request,
+    authorization: str = Header(None),
+) -> Dict[str, Any]:
+    """
+    Delete all synced tasks from Notion and clear Firestore state.
+    
+    This is a destructive operation - use with caution!
+    Requires authorization token in header.
+    
+    Args:
+        request: FastAPI request object
+        authorization: Authorization header
+        
+    Returns:
+        Reset summary
+    """
+    # Check if running in production
+    if not request.app.state.store:
+        return {
+            "status": "local_dev_mode",
+            "message": "Running in local dev mode without Firestore.",
+        }
+    
+    # Verify authorization token
+    expected_token = f"Bearer {settings.internal_cron_token}"
+    if authorization != expected_token:
+        logger.warning("Unauthorized reset attempt")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization token",
+        )
+    
+    try:
+        logger.warning("Starting sync reset - this will delete all synced data")
+        
+        # 1. Query all pages in Tasks database
+        pages_archived = 0
+        response = await request.app.state.notion_client.client.databases.query(
+            database_id=settings.notion_tasks_database_id,
+            page_size=100,
+        )
+        
+        # Archive all task pages
+        for page in response.get("results", []):
+            try:
+                await request.app.state.notion_client.archive_page(page["id"])
+                pages_archived += 1
+            except Exception as e:
+                logger.error(f"Error archiving page {page['id']}: {e}")
+        
+        # 2. Clear Firestore sync state
+        states_cleared = await request.app.state.store.clear_all_task_states()
+        
+        logger.info(
+            "Sync reset complete",
+            extra={"pages_archived": pages_archived, "states_cleared": states_cleared},
+        )
+        
+        return {
+            "status": "success",
+            "message": "All synced data has been cleared",
+            "pages_archived": pages_archived,
+            "states_cleared": states_cleared,
+            "note": "Run /reconcile to re-sync all tasks with @capsync label",
+        }
+        
+    except Exception as e:
+        logger.error("Error during reset", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error during reset: {str(e)}",
+        )
+
+
 @app.get("/")
 async def root(request: Request) -> Dict[str, Any]:
     """Root endpoint."""
@@ -280,9 +356,9 @@ async def test_todoist(request: Request, show_tasks: bool = False, capsync_only:
         # Optionally show tasks
         if show_tasks or capsync_only:
             if capsync_only:
-                # Get only tasks with @capsync label
-                tasks = await request.app.state.todoist_client.get_active_tasks_with_label("@capsync")
-                result["message"] = "Found tasks with @capsync label"
+                # Get only tasks with capsync label (checks both "capsync" and "@capsync")
+                tasks = await request.app.state.todoist_client.get_active_tasks_with_label()
+                result["message"] = "Found tasks with capsync label"
                 result["capsync_task_count"] = len(tasks)
             else:
                 # Get all tasks

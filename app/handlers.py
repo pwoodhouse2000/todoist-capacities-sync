@@ -157,12 +157,12 @@ class ReconcileHandler:
         """
         logger.info("Starting reconciliation")
 
-        # Fetch all Todoist tasks with @capsync label
-        active_tasks = await self.todoist.get_active_tasks_with_label("@capsync")
+        # Fetch all Todoist tasks with capsync label (checks both "capsync" and "@capsync")
+        active_tasks = await self.todoist.get_active_tasks_with_label()
         active_task_ids = {task.id for task in active_tasks}
 
         logger.info(
-            "Found active tasks with @capsync",
+            "Found active tasks with capsync label",
             extra={"count": len(active_tasks)},
         )
 
@@ -178,7 +178,7 @@ class ReconcileHandler:
                     action=SyncAction.UPSERT,
                     todoist_task_id=task.id,
                 )
-                await self.worker.process_message(message)
+                await self.worker.process_message(message, sync_source="reconciliation")
                 upserted += 1
             except Exception as e:
                 logger.error(

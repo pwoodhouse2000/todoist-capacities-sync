@@ -35,24 +35,26 @@ class SyncWorker:
         self.notion = notion_client
         self.store = store
 
-    async def process_message(self, message: PubSubMessage) -> None:
+    async def process_message(self, message: PubSubMessage, sync_source: str = "webhook") -> None:
         """
         Process a single Pub/Sub sync message.
 
         Args:
             message: PubSubMessage with sync instructions
+            sync_source: Source of sync ("webhook" or "reconciliation")
         """
         logger.info(
             "Processing sync message",
             extra={
                 "action": message.action,
                 "task_id": message.todoist_task_id,
+                "sync_source": sync_source,
             },
         )
 
         try:
             if message.action == SyncAction.UPSERT:
-                await self._handle_upsert(message)
+                await self._handle_upsert(message, sync_source)
             elif message.action == SyncAction.ARCHIVE:
                 await self._handle_archive(message)
             else:
@@ -69,12 +71,13 @@ class SyncWorker:
             )
             await self.store.mark_task_error(message.todoist_task_id, str(e))
 
-    async def _handle_upsert(self, message: PubSubMessage) -> None:
+    async def _handle_upsert(self, message: PubSubMessage, sync_source: str = "webhook") -> None:
         """
         Handle UPSERT action: create or update task in Notion.
 
         Args:
             message: PubSubMessage with task data
+            sync_source: Source of sync ("webhook" or "reconciliation")
         """
         task_id = message.todoist_task_id
 
@@ -87,16 +90,27 @@ class SyncWorker:
             task = await self.todoist.get_task(task_id)
 
         # Gate: Check if task has @capsync label
+        # Exception: If task was previously synced and is now completed, update it even without label
+        # (completed tasks might lose labels in Todoist API responses)
+        existing_state = await self.store.get_task_state(task_id)
+        
         if not has_capsync_label(task.labels):
-            logger.info(
-                "Task does not have @capsync label, skipping",
-                extra={"task_id": task_id},
-            )
-            # If it previously existed, archive it
-            existing_state = await self.store.get_task_state(task_id)
-            if existing_state:
-                await self._handle_archive(message)
-            return
+            # If task is completed and was previously synced, update it to mark as complete
+            if task.is_completed and existing_state:
+                logger.info(
+                    "Completed task without label - updating to mark complete",
+                    extra={"task_id": task_id},
+                )
+                # Continue to update the task
+            else:
+                logger.info(
+                    "Task does not have @capsync label, skipping",
+                    extra={"task_id": task_id},
+                )
+                # If it previously existed, archive it
+                if existing_state:
+                    await self._handle_archive(message)
+                return
 
         # Fetch related data
         project = await self.todoist.get_project(task.project_id)
@@ -130,7 +144,18 @@ class SyncWorker:
         project_notion_id = await self._ensure_project_exists(notion_project)
 
         # Upsert task in Notion
+        # First check Firestore state
         notion_page_id = existing_state.capacities_object_id if existing_state else None
+        
+        # If no state in Firestore, check if page exists in Notion by Todoist ID
+        if not notion_page_id:
+            existing_page = await self.notion.find_todo_by_todoist_id(task_id)
+            if existing_page:
+                notion_page_id = existing_page["id"]
+                logger.info(
+                    "Found existing page in Notion without Firestore state",
+                    extra={"task_id": task_id, "page_id": notion_page_id},
+                )
         
         if notion_page_id:
             # Update existing page
@@ -147,6 +172,7 @@ class SyncWorker:
             payload_hash=payload_hash,
             last_synced_at=datetime.now(),
             sync_status=SyncStatus.OK,
+            sync_source=sync_source,
         )
         await self.store.save_task_state(new_state)
 

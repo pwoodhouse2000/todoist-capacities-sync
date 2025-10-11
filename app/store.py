@@ -199,6 +199,29 @@ class FirestoreStore:
             state.last_synced_at = datetime.now()
             await self.save_task_state(state)
 
+    async def clear_all_task_states(self) -> int:
+        """
+        Delete all task sync states from Firestore.
+        
+        Returns:
+            Number of states deleted
+        """
+        logger.warning("Clearing all task states from Firestore")
+        
+        client = await self._get_client()
+        collection_ref = client.collection(self._task_collection_ref())
+        
+        # Get all documents
+        docs = collection_ref.stream()
+        
+        count = 0
+        async for doc in docs:
+            await doc.reference.delete()
+            count += 1
+        
+        logger.info(f"Cleared {count} task states")
+        return count
+    
     async def close(self) -> None:
         """Close Firestore client connection."""
         if self.client:

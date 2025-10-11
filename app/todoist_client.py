@@ -162,12 +162,12 @@ class TodoistClient:
         data = await self._get("/comments", params={"task_id": task_id})
         return [TodoistComment(**comment) for comment in data]
 
-    async def get_active_tasks_with_label(self, label: str = "@capsync") -> List[TodoistTask]:
+    async def get_active_tasks_with_label(self, label: str = "capsync") -> List[TodoistTask]:
         """
         Fetch all active tasks with the specified label.
 
         Args:
-            label: Label to filter by (default: "@capsync")
+            label: Label to filter by (default: "capsync")
 
         Returns:
             List of TodoistTask objects
@@ -175,6 +175,7 @@ class TodoistClient:
         logger.info("Fetching active tasks with label", extra={"label": label})
         # Note: Todoist API doesn't support direct label filtering in v2
         # We need to fetch all tasks and filter client-side
+        # Check for both "@capsync" and "capsync" to handle both label formats
         all_tasks = await self.get_tasks()
-        return [task for task in all_tasks if label in task.labels]
+        return [task for task in all_tasks if label in task.labels or f"@{label}" in task.labels]
 
