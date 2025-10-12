@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     # Notion Configuration
     notion_tasks_database_id: str
     notion_projects_database_id: str
+    notion_areas_database_id: str = ""  # Optional: AREAS database for PARA method
+    notion_people_database_id: str = ""  # Optional: People database for person assignments
 
     # API Base URLs
     todoist_api_base_url: str = "https://api.todoist.com/rest/v2"
@@ -42,6 +44,20 @@ class Settings(BaseSettings):
     max_retries: int = 3
     retry_delay: float = 1.0
     request_timeout: int = 30
+
+    # Feature flags
+    add_notion_backlink: bool = True  # Add Notion page link to Todoist task description
+    enable_para_areas: bool = True  # Enable PARA method area mapping
+    enable_people_matching: bool = True  # Enable automatic people matching from labels
+    
+    # PARA Method Configuration
+    para_area_labels: list[str] = [
+        "HOME", "HEALTH", "PROSPER", "WORK", 
+        "PERSONAL & FAMILY", "FINANCIAL", "FUN"
+    ]
+    
+    # People matching configuration
+    person_label_emoji: str = "👤"  # Emoji that identifies a person label
 
 
 # Global settings instance

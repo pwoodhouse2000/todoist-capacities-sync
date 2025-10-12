@@ -6,10 +6,12 @@ from typing import Optional
 from app.notion_client import NotionClient
 from app.logging_setup import get_logger
 from app.mapper import create_archived_todo, map_project_to_notion, map_task_to_todo
-from app.models import PubSubMessage, SyncAction, SyncStatus, TaskSyncState
+from app.models import PubSubMessage, SyncAction, SyncStatus, TaskSyncState, TodoistTask
+from app.settings import settings
 from app.store import FirestoreStore
 from app.todoist_client import TodoistClient
-from app.utils import compute_payload_hash, has_capsync_label
+from app.utils import compute_payload_hash, extract_para_area, extract_person_labels, has_capsync_label
+from typing import List
 
 logger = get_logger(__name__)
 
@@ -141,7 +143,34 @@ class SyncWorker:
             return
 
         # Ensure project exists in Notion
-        project_notion_id = await self._ensure_project_exists(notion_project)
+        project_notion_id = await self._ensure_project_exists(notion_project, task.labels)
+        
+        # Extract PARA area from task labels
+        # (Todoist projects don't have labels, so we use task labels)
+        area_name = extract_para_area(task.labels)
+        area_page_id = None
+        if area_name:
+            area_page_id = await self.notion.ensure_area_exists(area_name)
+            logger.info(
+                "Task assigned to AREA",
+                extra={"task_id": task_id, "area": area_name},
+            )
+
+        # Extract and match people from task labels
+        person_names = extract_person_labels(task.labels)
+        people_page_ids = []
+        
+        logger.info(
+            "Extracted person labels from task",
+            extra={"task_id": task_id, "person_names": person_names, "all_labels": task.labels},
+        )
+        
+        if person_names:
+            people_page_ids = await self.notion.match_people(person_names)
+            logger.info(
+                "Person matching complete",
+                extra={"task_id": task_id, "people_count": len(people_page_ids), "person_names": person_names, "matched": len(people_page_ids) > 0},
+            )
 
         # Upsert task in Notion
         # First check Firestore state
@@ -159,10 +188,10 @@ class SyncWorker:
         
         if notion_page_id:
             # Update existing page
-            result = await self.notion.update_todo_page(notion_page_id, todo)
+            result = await self.notion.update_todo_page(notion_page_id, todo, area_page_id, people_page_ids)
         else:
             # Create new page
-            result = await self.notion.create_todo_page(todo, project_notion_id)
+            result = await self.notion.create_todo_page(todo, project_notion_id, area_page_id, people_page_ids)
             notion_page_id = result.get("id")
 
         # Update sync state
@@ -183,6 +212,10 @@ class SyncWorker:
                 "notion_page_id": notion_page_id,
             },
         )
+        
+        # Add Notion backlink to Todoist task description if enabled
+        if settings.add_notion_backlink:
+            await self._add_notion_backlink(task, notion_page_id)
 
     async def _handle_archive(self, message: PubSubMessage) -> None:
         """
@@ -221,12 +254,17 @@ class SyncWorker:
             extra={"task_id": task_id},
         )
 
-    async def _ensure_project_exists(self, project: "NotionProject") -> Optional[str]:
+    async def _ensure_project_exists(
+        self, 
+        project: "NotionProject",
+        task_labels: List[str]
+    ) -> Optional[str]:
         """
         Ensure project exists in Notion, create if needed.
 
         Args:
             project: NotionProject model
+            task_labels: Labels from the task (for area detection since projects don't have labels)
 
         Returns:
             Notion project page ID
@@ -243,8 +281,20 @@ class SyncWorker:
         if existing_page:
             notion_page_id = existing_page["id"]
         else:
-            # Create new project page
-            result = await self.notion.create_project_page(project)
+            # Extract PARA area from task labels (projects don't have labels in Todoist)
+            # We'll use the task's area label to categorize the project
+            from app.utils import extract_para_area
+            area_name = extract_para_area(task_labels)
+            area_page_id = None
+            if area_name:
+                area_page_id = await self.notion.ensure_area_exists(area_name)
+                logger.info(
+                    "Project assigned to AREA",
+                    extra={"project_id": project_id, "area": area_name},
+                )
+            
+            # Create new project page with area relation
+            result = await self.notion.create_project_page(project, area_page_id)
             notion_page_id = result.get("id")
 
         # Save state
@@ -267,3 +317,39 @@ class SyncWorker:
         )
 
         return notion_page_id
+
+    async def _add_notion_backlink(self, task: TodoistTask, notion_page_id: str) -> None:
+        """
+        Add Notion page link to Todoist task description.
+
+        Args:
+            task: TodoistTask object
+            notion_page_id: Notion page ID
+        """
+        # Construct Notion URL (remove hyphens from page ID)
+        notion_url = f"https://notion.so/{notion_page_id.replace('-', '')}"
+        
+        # Check if link is already in description
+        if notion_url in task.description or "notion.so" in task.description:
+            logger.info(
+                "Notion link already in task description",
+                extra={"task_id": task.id},
+            )
+            return
+        
+        # Append Notion link to description
+        separator = "\n\n" if task.description else ""
+        new_description = f"{task.description}{separator}🔗 [View in Notion]({notion_url})"
+        
+        try:
+            await self.todoist.update_task_description(task.id, new_description)
+            logger.info(
+                "Added Notion backlink to Todoist task",
+                extra={"task_id": task.id, "notion_url": notion_url},
+            )
+        except Exception as e:
+            # Don't fail the sync if backlink fails
+            logger.warning(
+                "Failed to add Notion backlink to Todoist task",
+                extra={"task_id": task.id, "error": str(e)},
+            )

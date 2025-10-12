@@ -20,6 +20,8 @@ class NotionClient:
         api_key: Optional[str] = None,
         tasks_database_id: Optional[str] = None,
         projects_database_id: Optional[str] = None,
+        areas_database_id: Optional[str] = None,
+        people_database_id: Optional[str] = None,
     ) -> None:
         """
         Initialize Notion client.
@@ -28,22 +30,31 @@ class NotionClient:
             api_key: Notion integration token (defaults to settings)
             tasks_database_id: Notion database ID for tasks
             projects_database_id: Notion database ID for projects
+            areas_database_id: Notion database ID for PARA areas
+            people_database_id: Notion database ID for people
         """
         self.api_key = api_key or settings.notion_api_key
         self.tasks_db_id = tasks_database_id or settings.notion_tasks_database_id
         self.projects_db_id = projects_database_id or settings.notion_projects_database_id
+        self.areas_db_id = areas_database_id or settings.notion_areas_database_id
+        self.people_db_id = people_database_id or settings.notion_people_database_id
         self.client = AsyncClient(auth=self.api_key)
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
     )
-    async def create_project_page(self, project: NotionProject) -> Dict[str, Any]:
+    async def create_project_page(
+        self, 
+        project: NotionProject, 
+        area_page_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Create a project page in Notion.
 
         Args:
             project: NotionProject model with data
+            area_page_id: Optional AREAS page ID for PARA method
 
         Returns:
             Created page data from Notion
@@ -60,6 +71,10 @@ class NotionClient:
             "Color": {"select": {"name": project.color}},
             "Is Shared": {"checkbox": project.is_shared},
         }
+        
+        # Add AREAS relation if provided
+        if area_page_id:
+            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
 
         result = await self.client.pages.create(
             parent={"database_id": self.projects_db_id},
@@ -81,6 +96,8 @@ class NotionClient:
         self,
         todo: NotionToDo,
         project_page_id: Optional[str] = None,
+        area_page_id: Optional[str] = None,
+        people_page_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Create a todo page in Notion.
@@ -88,6 +105,8 @@ class NotionClient:
         Args:
             todo: NotionToDo model with data
             project_page_id: Notion page ID of the related project
+            area_page_id: Optional AREAS page ID for PARA method
+            people_page_ids: Optional list of People page IDs for person assignments
 
         Returns:
             Created page data from Notion
@@ -109,6 +128,14 @@ class NotionClient:
         # Add project relation if provided
         if project_page_id:
             properties["Project"] = {"relation": [{"id": project_page_id}]}
+
+        # Add AREAS relation if provided (PARA method)
+        if area_page_id:
+            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+
+        # Add People relations if provided
+        if people_page_ids:
+            properties["People"] = {"relation": [{"id": pid} for pid in people_page_ids]}
 
         # Add due date if present
         if todo.due_date:
@@ -189,6 +216,8 @@ class NotionClient:
         self,
         page_id: str,
         todo: NotionToDo,
+        area_page_id: Optional[str] = None,
+        people_page_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Update an existing todo page in Notion.
@@ -196,6 +225,8 @@ class NotionClient:
         Args:
             page_id: Notion page ID to update
             todo: NotionToDo model with updated data
+            area_page_id: Optional AREAS page ID for PARA method
+            people_page_ids: Optional list of People page IDs for person assignments
 
         Returns:
             Updated page data from Notion
@@ -218,6 +249,14 @@ class NotionClient:
         # Update labels
         if todo.todoist_labels:
             properties["Labels"] = {"multi_select": [{"name": label} for label in todo.todoist_labels]}
+
+        # Update AREAS relation if provided
+        if area_page_id:
+            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+
+        # Update People relations if provided
+        if people_page_ids:
+            properties["People"] = {"relation": [{"id": pid} for pid in people_page_ids]}
 
         result = await self.client.pages.update(page_id=page_id, properties=properties)
 
@@ -298,4 +337,197 @@ class NotionClient:
             properties={"Completed": {"checkbox": True}},
             archived=True,
         )
+
+    async def find_area_by_name(self, area_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Find an area page by name in the AREAS database.
+
+        Args:
+            area_name: Area name (e.g., "PROSPER", "HOME")
+
+        Returns:
+            Page dict if found, None otherwise
+        """
+        if not self.areas_db_id:
+            return None
+            
+        logger.info("Searching for area in AREAS database", extra={"area_name": area_name})
+
+        response = await self.client.databases.query(
+            database_id=self.areas_db_id,
+            filter={
+                "property": "Name",
+                "title": {"equals": area_name},
+            },
+        )
+
+        results = response.get("results", [])
+        if results:
+            logger.info(
+                "Found existing area page",
+                extra={"area_name": area_name, "page_id": results[0]["id"]},
+            )
+            return results[0]
+
+        return None
+
+    async def create_area_page(self, area_name: str) -> Dict[str, Any]:
+        """
+        Create an area page in the AREAS database.
+
+        Args:
+            area_name: Area name (e.g., "PROSPER", "HOME")
+
+        Returns:
+            Created page data
+        """
+        if not self.areas_db_id:
+            raise ValueError("AREAS database ID not configured")
+            
+        logger.info("Creating area page", extra={"area_name": area_name})
+
+        properties = {
+            "Name": {"title": [{"text": {"content": area_name}}]},
+        }
+
+        result = await self.client.pages.create(
+            parent={"database_id": self.areas_db_id},
+            properties=properties,
+        )
+
+        logger.info(
+            "Area page created",
+            extra={"area_name": area_name, "page_id": result["id"]},
+        )
+
+        return result
+
+    async def ensure_area_exists(self, area_name: str) -> Optional[str]:
+        """
+        Ensure an area page exists, create if needed.
+
+        Args:
+            area_name: Area name (e.g., "PROSPER", "HOME")
+
+        Returns:
+            Area page ID, or None if AREAS database not configured
+        """
+        if not self.areas_db_id:
+            return None
+            
+        # Try to find existing area
+        existing_area = await self.find_area_by_name(area_name)
+        if existing_area:
+            return existing_area["id"]
+
+        # Create new area
+        new_area = await self.create_area_page(area_name)
+        return new_area["id"]
+
+    async def find_person_by_name(self, person_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Find a person page by name in the People database.
+        
+        Uses fuzzy matching to handle variations like:
+        - "DougD" matches "Doug Diego"
+        - "VarshaA" matches "Varsha"
+        
+        Args:
+            person_name: Person name from Todoist label (e.g., "DougD", "VarshaA")
+            
+        Returns:
+            Person page dict if found, None otherwise
+        """
+        if not self.people_db_id:
+            return None
+            
+        logger.info(
+            "Searching for person in People database",
+            extra={"person_name": person_name},
+        )
+        
+        # Query all people with pagination (we'll do fuzzy matching client-side)
+        results = []
+        has_more = True
+        start_cursor = None
+        
+        while has_more:
+            query_params = {
+                "database_id": self.people_db_id,
+                "page_size": 100,
+            }
+            if start_cursor:
+                query_params["start_cursor"] = start_cursor
+                
+            response = await self.client.databases.query(**query_params)
+            results.extend(response.get("results", []))
+            
+            has_more = response.get("has_more", False)
+            start_cursor = response.get("next_cursor")
+        
+        logger.info(
+            "Fetched all people from database",
+            extra={"person_name": person_name, "total_people": len(results)},
+        )
+        
+        # Try exact match first
+        for page in results:
+            title_prop = page.get("properties", {}).get("Name", {})
+            if title_prop and "title" in title_prop and title_prop["title"]:
+                page_name = title_prop["title"][0]["text"]["content"]
+                
+                # Exact match (case-insensitive)
+                if page_name.lower() == person_name.lower():
+                    logger.info(
+                        "Found person (exact match)",
+                        extra={"label": person_name, "notion_name": page_name, "page_id": page["id"]},
+                    )
+                    return page
+        
+        # Try fuzzy matching - check if label is contained in or contains the page name
+        for page in results:
+            title_prop = page.get("properties", {}).get("Name", {})
+            if title_prop and "title" in title_prop and title_prop["title"]:
+                page_name = title_prop["title"][0]["text"]["content"]
+                
+                # Fuzzy match: "DougD" matches "Doug Diego"
+                label_lower = person_name.lower()
+                name_lower = page_name.lower()
+                
+                # Check if label starts with page name or vice versa
+                if (label_lower in name_lower or name_lower in label_lower or
+                    label_lower.startswith(name_lower.split()[0]) or
+                    name_lower.startswith(label_lower)):
+                    logger.info(
+                        "Found person (fuzzy match)",
+                        extra={"label": person_name, "notion_name": page_name, "page_id": page["id"]},
+                    )
+                    return page
+        
+        logger.info(
+            "No matching person found",
+            extra={"person_name": person_name},
+        )
+        return None
+
+    async def match_people(self, person_names: List[str]) -> List[str]:
+        """
+        Match person names to People database pages.
+        
+        Args:
+            person_names: List of person names from Todoist labels
+            
+        Returns:
+            List of Notion page IDs for matched people
+        """
+        if not self.people_db_id or not person_names:
+            return []
+        
+        matched_page_ids = []
+        for person_name in person_names:
+            person_page = await self.find_person_by_name(person_name)
+            if person_page:
+                matched_page_ids.append(person_page["id"])
+        
+        return matched_page_ids
 

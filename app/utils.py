@@ -2,7 +2,7 @@
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import orjson
 
@@ -88,4 +88,63 @@ def build_todoist_task_url(task_id: str) -> str:
 def build_todoist_project_url(project_id: str) -> str:
     """Build a Todoist project URL."""
     return f"https://todoist.com/app/project/{project_id}"
+
+
+def extract_para_area(labels: List[str]) -> Optional[str]:
+    """
+    Extract PARA area from labels.
+    
+    Looks for labels matching PARA areas (HOME, HEALTH, PROSPER, WORK, etc.)
+    Handles both plain labels and emoji-suffixed labels (e.g., "PROSPER 📁")
+    
+    Args:
+        labels: List of label names from Todoist
+        
+    Returns:
+        Area name if found, None otherwise
+    """
+    from app.settings import settings
+    
+    if not settings.enable_para_areas or not labels:
+        return None
+    
+    # Check each label against defined PARA areas
+    for label in labels:
+        # Remove emoji and extra characters, get just the text
+        clean_label = label.split()[0].strip().upper()
+        
+        # Check if it matches any PARA area
+        for area in settings.para_area_labels:
+            if clean_label == area.upper() or label.upper() == area.upper():
+                return area
+    
+    return None
+
+
+def extract_person_labels(labels: List[str]) -> List[str]:
+    """
+    Extract person labels from Todoist labels.
+    
+    Person labels are identified by the 👤 emoji suffix.
+    Examples: "DougD 👤", "VarshaA 👤", "JamesH 👤"
+    
+    Args:
+        labels: List of label names from Todoist
+        
+    Returns:
+        List of person names (without emoji)
+    """
+    from app.settings import settings
+    
+    if not settings.enable_people_matching or not labels:
+        return []
+    
+    person_labels = []
+    for label in labels:
+        if settings.person_label_emoji in label:
+            # Extract the name before the emoji
+            person_name = label.replace(settings.person_label_emoji, "").strip()
+            person_labels.append(person_name)
+    
+    return person_labels
 

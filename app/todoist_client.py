@@ -1,6 +1,6 @@
 """Todoist API client for fetching tasks, projects, sections, and comments."""
 
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -56,6 +56,31 @@ class TodoistClient:
         async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
             logger.info("Todoist GET request", extra={"endpoint": endpoint, "params": params})
             response = await client.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()
+
+    @retry(
+        stop=stop_after_attempt(settings.max_retries),
+        wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
+    )
+    async def _post(self, endpoint: str, data: Dict[str, Any]) -> Dict:
+        """
+        Make POST request to Todoist API with retry logic.
+
+        Args:
+            endpoint: API endpoint (e.g., "/tasks/123")
+            data: JSON data to send
+
+        Returns:
+            JSON response data
+
+        Raises:
+            httpx.HTTPError: On request failure
+        """
+        url = f"{self.base_url}{endpoint}"
+        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
+            logger.info("Todoist POST request", extra={"endpoint": endpoint})
+            response = await client.post(url, headers=self.headers, json=data)
             response.raise_for_status()
             return response.json()
 
@@ -178,4 +203,22 @@ class TodoistClient:
         # Check for both "@capsync" and "capsync" to handle both label formats
         all_tasks = await self.get_tasks()
         return [task for task in all_tasks if label in task.labels or f"@{label}" in task.labels]
+
+    async def update_task_description(self, task_id: str, new_description: str) -> TodoistTask:
+        """
+        Update a task's description.
+
+        Args:
+            task_id: Todoist task ID
+            new_description: New description text
+
+        Returns:
+            Updated TodoistTask object
+        """
+        logger.info(
+            "Updating Todoist task description",
+            extra={"task_id": task_id, "description_length": len(new_description)},
+        )
+        data = await self._post(f"/tasks/{task_id}", {"description": new_description})
+        return TodoistTask(**data)
 
