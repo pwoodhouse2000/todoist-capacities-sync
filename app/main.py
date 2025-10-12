@@ -249,6 +249,102 @@ async def reconcile(
         )
 
 
+@app.post("/admin/remove-duplicates")
+async def remove_duplicates(
+    request: Request,
+    authorization: str = Header(None),
+    dry_run: bool = True,
+) -> Dict[str, Any]:
+    """
+    Find and optionally remove duplicate Notion pages for the same Todoist task.
+    
+    Args:
+        request: FastAPI request object
+        authorization: Authorization header
+        dry_run: If True, only report duplicates without removing them
+        
+    Returns:
+        Summary of duplicates found and removed
+    """
+    # Check if running in production
+    if not request.app.state.store:
+        return {
+            "status": "local_dev_mode",
+            "message": "Running in local dev mode without Firestore.",
+        }
+    
+    # Verify authorization token
+    expected_token = f"Bearer {settings.internal_cron_token}"
+    if authorization != expected_token:
+        logger.warning("Unauthorized duplicate removal attempt")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization token",
+        )
+    
+    try:
+        logger.info(f"Finding duplicates (dry_run={dry_run})")
+        
+        # Query all pages in Tasks database
+        response = await request.app.state.notion_client.client.databases.query(
+            database_id=settings.notion_tasks_database_id,
+            page_size=100,
+        )
+        
+        # Group pages by Todoist Task ID
+        task_id_to_pages = {}
+        for page in response.get("results", []):
+            task_id_prop = page.get("properties", {}).get("Todoist Task ID", {})
+            if task_id_prop and "rich_text" in task_id_prop and task_id_prop["rich_text"]:
+                task_id = task_id_prop["rich_text"][0]["text"]["content"]
+                if task_id not in task_id_to_pages:
+                    task_id_to_pages[task_id] = []
+                task_id_to_pages[task_id].append(page)
+        
+        # Find duplicates (tasks with more than one page)
+        duplicates = {tid: pages for tid, pages in task_id_to_pages.items() if len(pages) > 1}
+        
+        removed = 0
+        if not dry_run:
+            # For each duplicate set, keep the most recent and archive the rest
+            for task_id, pages in duplicates.items():
+                # Sort by created_time, keep the newest
+                sorted_pages = sorted(pages, key=lambda p: p["created_time"], reverse=True)
+                newest_page = sorted_pages[0]
+                
+                logger.info(
+                    f"Keeping newest page for task {task_id}",
+                    extra={"task_id": task_id, "kept_page_id": newest_page["id"]},
+                )
+                
+                # Archive the older duplicates
+                for page in sorted_pages[1:]:
+                    try:
+                        await request.app.state.notion_client.archive_page(page["id"])
+                        removed += 1
+                        logger.info(
+                            f"Archived duplicate page",
+                            extra={"task_id": task_id, "page_id": page["id"]},
+                        )
+                    except Exception as e:
+                        logger.error(f"Error archiving duplicate page {page['id']}: {e}")
+        
+        return {
+            "status": "success" if not dry_run else "dry_run",
+            "duplicates_found": len(duplicates),
+            "duplicate_tasks": list(duplicates.keys()),
+            "pages_removed": removed if not dry_run else 0,
+            "message": "Duplicates found" if dry_run else f"Removed {removed} duplicate pages",
+        }
+        
+    except Exception as e:
+        logger.error("Error finding/removing duplicates", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error: {str(e)}",
+        )
+
+
 @app.post("/admin/reset-sync")
 async def reset_sync(
     request: Request,

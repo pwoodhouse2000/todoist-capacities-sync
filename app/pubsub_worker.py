@@ -172,7 +172,7 @@ class SyncWorker:
                 extra={"task_id": task_id, "people_count": len(people_page_ids), "person_names": person_names, "matched": len(people_page_ids) > 0},
             )
 
-        # Upsert task in Notion
+        # Upsert task in Notion with race condition protection
         # First check Firestore state
         notion_page_id = existing_state.capacities_object_id if existing_state else None
         
@@ -183,6 +183,17 @@ class SyncWorker:
                 notion_page_id = existing_page["id"]
                 logger.info(
                     "Found existing page in Notion without Firestore state",
+                    extra={"task_id": task_id, "page_id": notion_page_id},
+                )
+        
+        # Double-check state again after Notion query (race condition protection)
+        # Another process might have created it between our first check and now
+        if not notion_page_id:
+            existing_state_recheck = await self.store.get_task_state(task_id)
+            if existing_state_recheck and existing_state_recheck.capacities_object_id:
+                notion_page_id = existing_state_recheck.capacities_object_id
+                logger.info(
+                    "Found state created by concurrent process",
                     extra={"task_id": task_id, "page_id": notion_page_id},
                 )
         
