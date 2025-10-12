@@ -174,3 +174,31 @@ def strip_notion_backlink(description: str) -> str:
     
     return result
 
+
+def should_auto_label_task(task_project_id: str, is_recurring: bool, is_inbox: bool) -> bool:
+    """
+    Determine if a task should automatically get the capsync label.
+    
+    Tasks are auto-labeled if they are:
+    - Not in the Inbox
+    - Not recurring
+    - Not completed (caller should pre-filter completed tasks)
+    
+    Args:
+        task_project_id: Task's project ID
+        is_recurring: Whether the task has a recurring due date
+        is_inbox: Whether the task's project is the Inbox
+        
+    Returns:
+        True if task should be auto-labeled
+    """
+    # Don't label tasks in Inbox
+    if is_inbox:
+        return False
+    
+    # Don't label recurring tasks
+    if is_recurring:
+        return False
+    
+    return True
+

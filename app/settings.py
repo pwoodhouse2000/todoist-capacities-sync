@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     add_notion_backlink: bool = True  # Add Notion page link to Todoist task description
     enable_para_areas: bool = True  # Enable PARA method area mapping
     enable_people_matching: bool = True  # Enable automatic people matching from labels
+    auto_label_tasks: bool = True  # Auto-add capsync label to eligible tasks (not in Inbox, not recurring)
     
     # PARA Method Configuration
     para_area_labels: list[str] = [

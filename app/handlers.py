@@ -11,7 +11,7 @@ from app.pubsub_worker import SyncWorker
 from app.settings import settings
 from app.store import FirestoreStore
 from app.todoist_client import TodoistClient
-from app.utils import has_capsync_label
+from app.utils import has_capsync_label, should_auto_label_task
 
 logger = get_logger(__name__)
 
@@ -148,22 +148,94 @@ class ReconcileHandler:
         self.store = store
         self.worker = SyncWorker(todoist_client, notion_client, store)
 
+    async def _auto_label_tasks(self) -> int:
+        """
+        Auto-add capsync label to eligible tasks.
+        
+        Eligible tasks are:
+        - Not completed
+        - Not in Inbox
+        - Not recurring
+        - Don't already have capsync label
+        
+        Returns:
+            Number of tasks that were auto-labeled
+        """
+        # Check if auto-labeling is enabled
+        if not settings.auto_label_tasks:
+            logger.info("Auto-labeling is disabled")
+            return 0
+        
+        logger.info("Auto-labeling eligible tasks")
+        
+        # Fetch all active (non-completed) tasks
+        all_tasks = await self.todoist.get_tasks()
+        
+        # Fetch all projects to identify Inbox
+        all_projects = await self.todoist.get_projects()
+        inbox_project_ids = {p.id for p in all_projects if p.name == "Inbox"}
+        
+        auto_labeled = 0
+        
+        for task in all_tasks:
+            # Skip completed tasks
+            if task.is_completed:
+                continue
+            
+            # Skip if already has capsync label
+            if has_capsync_label(task.labels):
+                continue
+            
+            # Check if task is recurring
+            is_recurring = task.due.is_recurring if task.due else False
+            
+            # Check if task is in Inbox
+            is_inbox = task.project_id in inbox_project_ids
+            
+            # Determine if task should be auto-labeled
+            if should_auto_label_task(task.project_id, is_recurring, is_inbox):
+                try:
+                    await self.todoist.add_label_to_task(task.id, "capsync", task.labels)
+                    auto_labeled += 1
+                    logger.info(
+                        "Auto-added capsync label to task",
+                        extra={"task_id": task.id, "content": task.content},
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error adding label to task",
+                        extra={"task_id": task.id, "error": str(e)},
+                    )
+        
+        logger.info(
+            "Auto-labeling complete",
+            extra={"auto_labeled": auto_labeled, "total_checked": len(all_tasks)},
+        )
+        
+        return auto_labeled
+
     async def reconcile(self) -> Dict[str, Any]:
         """
         Perform full reconciliation of all @capsync tasks.
+        
+        Auto-adds capsync label to eligible tasks (not in Inbox, not recurring, not completed)
+        then syncs all tasks with the label.
 
         Returns:
             Reconciliation summary
         """
         logger.info("Starting reconciliation")
 
-        # Fetch all Todoist tasks with capsync label (checks both "capsync" and "@capsync")
+        # Step 1: Auto-label eligible tasks
+        auto_labeled_count = await self._auto_label_tasks()
+        
+        # Step 2: Fetch all Todoist tasks with capsync label (checks both "capsync" and "@capsync")
         active_tasks = await self.todoist.get_active_tasks_with_label()
         active_task_ids = {task.id for task in active_tasks}
 
         logger.info(
             "Found active tasks with capsync label",
-            extra={"count": len(active_tasks)},
+            extra={"count": len(active_tasks), "auto_labeled": auto_labeled_count},
         )
 
         # Fetch all stored sync states
@@ -207,6 +279,7 @@ class ReconcileHandler:
         summary = {
             "status": "completed",
             "active_tasks": len(active_tasks),
+            "auto_labeled": auto_labeled_count,
             "upserted": upserted,
             "archived": archived,
             "total_stored": len(stored_states),
