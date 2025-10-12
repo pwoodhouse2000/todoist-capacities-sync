@@ -92,6 +92,65 @@ class NotionClient:
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
     )
+    async def update_project_page(
+        self,
+        page_id: str,
+        project: NotionProject,
+        area_page_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update an existing Notion project page.
+
+        Args:
+            page_id: Notion page ID
+            project: NotionProject model with latest data
+            area_page_id: Optional AREAS relation to set
+
+        Returns:
+            Updated page data
+        """
+        logger.info(
+            "Updating Notion project page",
+            extra={"page_id": page_id, "project_name": project.name},
+        )
+
+        properties: Dict[str, Any] = {
+            "Name": {"title": [{"text": {"content": project.name}}]},
+            "Todoist URL": {"url": project.url},
+            "Color": {"select": {"name": project.color}},
+            "Is Shared": {"checkbox": project.is_shared},
+        }
+
+        if area_page_id:
+            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+
+        result = await self.client.pages.update(page_id=page_id, properties=properties)
+
+        logger.info("Project page updated", extra={"page_id": page_id})
+        return result
+
+    async def update_project_status(self, page_id: str, status: str) -> Dict[str, Any]:
+        """
+        Update the Status property of a Notion project page.
+
+        Args:
+            page_id: Notion page ID
+            status: New status ("Active" or "Archived")
+
+        Returns:
+            Updated page data
+        """
+        logger.info(
+            "Updating Notion project status",
+            extra={"page_id": page_id, "status": status},
+        )
+        properties = {"Status": {"select": {"name": status}}}
+        return await self.client.pages.update(page_id=page_id, properties=properties)
+
+    @retry(
+        stop=stop_after_attempt(settings.max_retries),
+        wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
+    )
     async def create_todo_page(
         self,
         todo: NotionToDo,
@@ -218,6 +277,7 @@ class NotionClient:
         todo: NotionToDo,
         area_page_id: Optional[str] = None,
         people_page_ids: Optional[List[str]] = None,
+        project_page_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update an existing todo page in Notion.
@@ -257,6 +317,10 @@ class NotionClient:
         # Update People relations if provided
         if people_page_ids:
             properties["People"] = {"relation": [{"id": pid} for pid in people_page_ids]}
+
+        # Update Project relation if provided (task moved projects)
+        if project_page_id:
+            properties["Project"] = {"relation": [{"id": project_page_id}]}
 
         result = await self.client.pages.update(page_id=page_id, properties=properties)
 

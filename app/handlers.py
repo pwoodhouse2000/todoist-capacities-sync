@@ -229,7 +229,13 @@ class ReconcileHandler:
         # Step 1: Auto-label eligible tasks
         auto_labeled_count = await self._auto_label_tasks()
         
-        # Step 2: Fetch all Todoist tasks with capsync label (checks both "capsync" and "@capsync")
+        # Step 2: Reconcile projects (archival status)
+        await self._reconcile_projects()
+
+        # Step 3a: Pull edits from Notion back to Todoist (titles + priority + project titles)
+        await self._reconcile_notion_to_todoist()
+
+        # Step 3b: Fetch all Todoist tasks with capsync label (checks both "capsync" and "@capsync")
         active_tasks = await self.todoist.get_active_tasks_with_label()
         active_task_ids = {task.id for task in active_tasks}
 
@@ -288,4 +294,102 @@ class ReconcileHandler:
         logger.info("Reconciliation completed", extra=summary)
 
         return summary
+
+    async def _reconcile_projects(self) -> None:
+        """
+        Reconcile all Todoist projects, syncing name changes and archival status.
+        """
+        logger.info("Starting project reconciliation")
+        all_todoist_projects = await self.todoist.get_projects()
+        
+        for project in all_todoist_projects:
+            # Try to find existing project in Notion
+            existing_page = await self.notion.find_project_by_todoist_id(project.id)
+            if not existing_page:
+                continue
+
+            notion_page_id = existing_page["id"]
+            
+            # Sync archival status
+            try:
+                if project.is_archived:
+                    await self.notion.update_project_status(notion_page_id, "Archived")
+                    logger.info("Archived Notion project", extra={"project_id": project.id})
+                else:
+                    # If it was previously archived, maybe set it back to Active
+                    current_status = existing_page.get("properties", {}).get("Status", {}).get("select", {}).get("name")
+                    if current_status == "Archived":
+                        await self.notion.update_project_status(notion_page_id, "Active")
+                        logger.info("Un-archived Notion project", extra={"project_id": project.id})
+
+            except Exception as e:
+                logger.warning(f"Failed to update project status for {project.id}: {e}")
+
+    async def _reconcile_notion_to_todoist(self) -> None:
+        """
+        Pull selected edits from Notion into Todoist (titles and priority).
+        """
+        try:
+            # 1) Projects: sync Name -> Todoist project name
+            projects = await self.notion.client.databases.query(
+                database_id=self.notion.projects_db_id,
+                page_size=100,  # Fetch more projects
+            )
+            for page in projects.get("results", []):
+                props = page.get("properties", {})
+                
+                # Safely get name
+                name_prop = props.get("Name", {}).get("title")
+                name = name_prop[0].get("text", {}).get("content") if name_prop else None
+
+                # Safely get project ID
+                proj_id_prop = props.get("Todoist Project ID", {}).get("rich_text")
+                proj_id = proj_id_prop[0].get("text", {}).get("content") if proj_id_prop else None
+                
+                if name and proj_id:
+                    try:
+                        todoist_proj = await self.todoist.get_project(proj_id)
+                        if todoist_proj.name != name:
+                            await self.todoist.update_project_name(proj_id, name)
+                            logger.info("Updated Todoist project name from Notion", extra={"project_id": proj_id, "name": name})
+                    except Exception as e:
+                        logger.debug(f"Could not sync project {proj_id}: {e}")
+
+
+            # 2) Tasks: sync Name and Priority -> Todoist
+            tasks = await self.notion.client.databases.query(
+                database_id=self.notion.tasks_db_id,
+                page_size=100, # Fetch more tasks
+            )
+            for page in tasks.get("results", []):
+                props = page.get("properties", {})
+
+                # Safely get title
+                title_prop = props.get("Name", {}).get("title")
+                title = title_prop[0].get("text", {}).get("content") if title_prop else None
+
+                # Safely get task ID
+                todoist_id_prop = props.get("Todoist Task ID", {}).get("rich_text")
+                todoist_id = todoist_id_prop[0].get("text", {}).get("content") if todoist_id_prop else None
+
+                priority_select = props.get("Priority", {}).get("select", {}).get("name")
+                
+                if not todoist_id:
+                    continue
+                try:
+                    td_task = await self.todoist.get_task(todoist_id)
+                    # Title
+                    if title and td_task.content != title:
+                        await self.todoist.update_task_title(todoist_id, title)
+                        logger.info("Updated Todoist task title from Notion", extra={"task_id": todoist_id})
+                    # Priority
+                    if priority_select and priority_select.startswith("P"):
+                        prio = int(priority_select[1:])
+                        if prio != td_task.priority:
+                            await self.todoist.update_task_priority(todoist_id, prio)
+                            logger.info("Updated Todoist task priority from Notion", extra={"task_id": todoist_id, "priority": prio})
+                except Exception as e:
+                    logger.debug(f"Could not sync task {todoist_id}: {e}")
+        except Exception as e:
+            logger.warning("Notion->Todoist reconciliation skipped due to error", extra={"error": str(e)})
 

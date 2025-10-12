@@ -46,6 +46,7 @@ class TodoistProject(BaseModel):
     name: str
     color: str
     is_shared: bool = False
+    is_archived: bool = False
     url: str
 
 

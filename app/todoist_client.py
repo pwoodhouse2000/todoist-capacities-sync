@@ -253,3 +253,48 @@ class TodoistClient:
         data = await self._post(f"/tasks/{task_id}", {"labels": updated_labels})
         return TodoistTask(**data)
 
+    async def update_task_title(self, task_id: str, new_title: str) -> TodoistTask:
+        """
+        Update a task's title (content).
+
+        Args:
+            task_id: Todoist task ID
+            new_title: New task content/title
+
+        Returns:
+            Updated TodoistTask
+        """
+        logger.info("Updating Todoist task title", extra={"task_id": task_id})
+        data = await self._post(f"/tasks/{task_id}", {"content": new_title})
+        return TodoistTask(**data)
+
+    async def update_task_priority(self, task_id: str, priority: int) -> TodoistTask:
+        """
+        Update a task's priority (1-4).
+
+        Args:
+            task_id: Todoist task ID
+            priority: Priority 1-4
+
+        Returns:
+            Updated TodoistTask
+        """
+        logger.info("Updating Todoist task priority", extra={"task_id": task_id, "priority": priority})
+        data = await self._post(f"/tasks/{task_id}", {"priority": priority})
+        return TodoistTask(**data)
+
+    async def update_project_name(self, project_id: str, new_name: str) -> TodoistProject:
+        """
+        Update a project's name.
+
+        Args:
+            project_id: Todoist project ID
+            new_name: New name
+
+        Returns:
+            Updated TodoistProject
+        """
+        logger.info("Updating Todoist project name", extra={"project_id": project_id})
+        data = await self._post(f"/projects/{project_id}", {"name": new_name})
+        return TodoistProject(**data)
+

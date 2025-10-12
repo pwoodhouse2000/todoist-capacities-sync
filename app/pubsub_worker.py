@@ -142,7 +142,7 @@ class SyncWorker:
             )
             return
 
-        # Ensure project exists in Notion
+        # Ensure project exists in Notion (and capture page id for potential project moves)
         project_notion_id = await self._ensure_project_exists(notion_project, task.labels)
         
         # Extract PARA area from task labels
@@ -198,8 +198,14 @@ class SyncWorker:
                 )
         
         if notion_page_id:
-            # Update existing page
-            result = await self.notion.update_todo_page(notion_page_id, todo, area_page_id, people_page_ids)
+            # Update existing page (also update Project relation if task moved projects)
+            result = await self.notion.update_todo_page(
+                notion_page_id,
+                todo,
+                area_page_id,
+                people_page_ids,
+                project_page_id=project_notion_id,
+            )
         else:
             # Create new page
             result = await self.notion.create_todo_page(todo, project_notion_id, area_page_id, people_page_ids)
@@ -291,6 +297,18 @@ class SyncWorker:
         existing_page = await self.notion.find_project_by_todoist_id(project_id)
         if existing_page:
             notion_page_id = existing_page["id"]
+            # If the name/color/url changed, update the Notion project
+            # Detect area from labels and include
+            from app.utils import extract_para_area
+            area_name = extract_para_area(task_labels)
+            area_page_id = None
+            if area_name:
+                area_page_id = await self.notion.ensure_area_exists(area_name)
+            try:
+                await self.notion.update_project_page(notion_page_id, project, area_page_id)
+            except Exception:
+                # Non-fatal; continue with existing page
+                pass
         else:
             # Extract PARA area from task labels (projects don't have labels in Todoist)
             # We'll use the task's area label to categorize the project
