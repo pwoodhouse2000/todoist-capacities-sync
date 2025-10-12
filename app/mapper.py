@@ -11,7 +11,7 @@ from app.models import (
     TodoistProject,
     TodoistTask,
 )
-from app.utils import format_markdown_comments, get_current_timestamp
+from app.utils import format_markdown_comments, get_current_timestamp, strip_notion_backlink
 
 logger = get_logger(__name__)
 
@@ -39,8 +39,8 @@ def map_task_to_todo(
         extra={"task_id": task.id, "content": task.content},
     )
 
-    # Build body with description
-    body = task.description if task.description else ""
+    # Build body with description (strip Notion backlink to avoid circular sync)
+    body = strip_notion_backlink(task.description) if task.description else ""
 
     # Parse due date/time
     due_date = None

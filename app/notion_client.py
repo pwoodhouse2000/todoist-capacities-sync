@@ -260,6 +260,9 @@ class NotionClient:
 
         result = await self.client.pages.update(page_id=page_id, properties=properties)
 
+        # Note: We don't update body content on updates to preserve manual edits in Notion
+        # Description is only synced on initial task creation
+
         logger.info("Todo page updated", extra={"page_id": page_id})
 
         return result

@@ -148,3 +148,29 @@ def extract_person_labels(labels: List[str]) -> List[str]:
     
     return person_labels
 
+
+def strip_notion_backlink(description: str) -> str:
+    """
+    Strip Notion backlink from task description to avoid circular sync.
+    
+    Removes any line containing "notion.so" links that we add as backlinks.
+    Example: "🔗 [View in Notion](https://notion.so/...)"
+    
+    Args:
+        description: Task description text
+        
+    Returns:
+        Description with Notion backlink removed
+    """
+    if not description:
+        return description
+    
+    # Split by lines and filter out lines containing notion.so
+    lines = description.split('\n')
+    filtered_lines = [line for line in lines if 'notion.so' not in line.lower()]
+    
+    # Join back and strip trailing whitespace
+    result = '\n'.join(filtered_lines).strip()
+    
+    return result
+
