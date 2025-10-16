@@ -12,6 +12,8 @@ from app.utils import (
     safe_get,
     build_todoist_task_url,
     build_todoist_project_url,
+    extract_para_area,
+    extract_person_labels,
 )
 
 
@@ -184,4 +186,63 @@ class TestURLBuilders:
         task_id = "test-123-abc"
         url = build_todoist_task_url(task_id)
         assert task_id in url
+
+
+class TestExtractParaArea:
+    """Test extract_para_area function."""
+
+    def test_single_word_area_with_emoji(self):
+        """Test extracting single-word PARA area like 'WORK 📁'."""
+        labels = ["WORK 📁", "capsync"]
+        area = extract_para_area(labels)
+        assert area == "WORK"
+
+    def test_multi_word_area_with_emoji(self):
+        """Test extracting multi-word PARA area like 'PERSONAL & FAMILY 📁'."""
+        labels = ["PERSONAL & FAMILY 📁", "capsync"]
+        area = extract_para_area(labels)
+        assert area == "PERSONAL & FAMILY"
+
+    def test_area_without_emoji(self):
+        """Test extracting area label without emoji."""
+        labels = ["HEALTH", "urgent"]
+        area = extract_para_area(labels)
+        assert area == "HEALTH"
+
+    def test_area_case_insensitive(self):
+        """Test that area matching is case-insensitive."""
+        labels = ["prosper 📁"]
+        area = extract_para_area(labels)
+        assert area == "PROSPER"
+
+    def test_no_area_in_labels(self):
+        """Test when no PARA area is in labels."""
+        labels = ["urgent", "important", "someproject"]
+        area = extract_para_area(labels)
+        assert area is None
+
+    def test_empty_labels(self):
+        """Test with empty labels list."""
+        labels = []
+        area = extract_para_area(labels)
+        assert area is None
+
+    def test_multiple_areas_returns_first(self):
+        """Test that when multiple PARA areas exist, first match is returned."""
+        labels = ["HOME 📁", "WORK 📁"]
+        area = extract_para_area(labels)
+        # Should return one of them (order depends on settings list)
+        assert area in ["HOME", "WORK"]
+
+    def test_financial_area(self):
+        """Test FINANCIAL area."""
+        labels = ["FINANCIAL 📁"]
+        area = extract_para_area(labels)
+        assert area == "FINANCIAL"
+
+    def test_fun_area(self):
+        """Test FUN area."""
+        labels = ["FUN 📁"]
+        area = extract_para_area(labels)
+        assert area == "FUN"
 

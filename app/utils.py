@@ -96,6 +96,7 @@ def extract_para_area(labels: List[str]) -> Optional[str]:
     
     Looks for labels matching PARA areas (HOME, HEALTH, PROSPER, WORK, etc.)
     Handles both plain labels and emoji-suffixed labels (e.g., "PROSPER 📁")
+    Also handles multi-word areas like "PERSONAL & FAMILY 📁"
     
     Args:
         labels: List of label names from Todoist
@@ -110,12 +111,16 @@ def extract_para_area(labels: List[str]) -> Optional[str]:
     
     # Check each label against defined PARA areas
     for label in labels:
-        # Remove emoji and extra characters, get just the text
-        clean_label = label.split()[0].strip().upper()
+        # Remove emoji by stripping all non-ASCII characters at the end
+        # This handles "PERSONAL & FAMILY 📁" -> "PERSONAL & FAMILY"
+        clean_label = label.strip()
+        # Remove trailing emoji/special characters
+        while clean_label and ord(clean_label[-1]) > 127:
+            clean_label = clean_label[:-1].strip()
         
-        # Check if it matches any PARA area
+        # Check if it matches any PARA area (case-insensitive)
         for area in settings.para_area_labels:
-            if clean_label == area.upper() or label.upper() == area.upper():
+            if clean_label.upper() == area.upper():
                 return area
     
     return None
