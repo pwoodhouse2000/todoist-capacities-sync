@@ -204,6 +204,27 @@ class TodoistClient:
         all_tasks = await self.get_tasks()
         return [task for task in all_tasks if label in task.labels or f"@{label}" in task.labels]
 
+    async def get_completed_tasks_with_label(self, label: str = "capsync") -> List[TodoistTask]:
+        """
+        Fetch all completed tasks with the specified label.
+        
+        Note: Todoist API state parameter allows fetching completed items.
+
+        Args:
+            label: Label to filter by (default: "capsync")
+
+        Returns:
+            List of completed TodoistTask objects
+        """
+        logger.info("Fetching completed tasks with label", extra={"label": label})
+        # Use state=completed to get completed tasks
+        # Manually call _get with state parameter since get_tasks() doesn't support it
+        params = {"state": "completed"}
+        data = await self._get("/tasks", params=params)
+        all_completed = [TodoistTask(**task) for task in data]
+        # Filter for tasks with the specified label
+        return [task for task in all_completed if label in task.labels or f"@{label}" in task.labels]
+
     async def update_task_description(self, task_id: str, new_description: str) -> TodoistTask:
         """
         Update a task's description.

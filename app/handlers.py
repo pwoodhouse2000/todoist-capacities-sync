@@ -264,6 +264,33 @@ class ReconcileHandler:
                     extra={"task_id": task.id, "error": str(e)},
                 )
 
+        # Also process completed tasks with capsync label
+        # (Todoist API only returns active tasks by default, so we need to explicitly fetch completed ones)
+        completed_tasks = await self.todoist.get_completed_tasks_with_label()
+        completed_task_ids = {task.id for task in completed_tasks}
+        
+        logger.info(
+            "Found completed tasks with capsync label",
+            extra={"count": len(completed_tasks)},
+        )
+        
+        for task in completed_tasks:
+            try:
+                message = PubSubMessage(
+                    action=SyncAction.UPSERT,
+                    todoist_task_id=task.id,
+                )
+                await self.worker.process_message(message, sync_source="reconciliation")
+                upserted += 1
+            except Exception as e:
+                logger.error(
+                    "Error upserting completed task during reconcile",
+                    extra={"task_id": task.id, "error": str(e)},
+                )
+        
+        # Update active_task_ids to include both active and completed
+        active_task_ids = active_task_ids | completed_task_ids
+
         # Find tasks that need archiving (in store but not in active tasks)
         tasks_to_archive = stored_task_ids - active_task_ids
         archived = 0
