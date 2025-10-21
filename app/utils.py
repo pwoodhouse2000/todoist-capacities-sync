@@ -160,12 +160,12 @@ def get_area_label_from_parent_project(parent_project_name: Optional[str]) -> Op
     
     This enables automatic inheritance of Area labels from parent projects.
     Matching is case-insensitive and strips emoji from both sides.
-    Returns the label WITH emoji as used in Todoist.
+    Returns the label WITH same emoji as the parent project.
     
     Examples:
-        "PROSPER 📂" -> "PROSPER 📁"
-        "HEALTH" -> "HEALTH 📁"
-        "PERSONAL & FAMILY" -> "PERSONAL & FAMILY 📁"
+        "PROSPER 📂" -> "PROSPER 📂"
+        "HEALTH 📂" -> "HEALTH 📂"
+        "PERSONAL & FAMILY 📂" -> "PERSONAL & FAMILY 📂"
     
     Args:
         parent_project_name: Name of parent project
@@ -186,8 +186,8 @@ def get_area_label_from_parent_project(parent_project_name: Optional[str]) -> Op
     # Try to match against defined PARA areas (case-insensitive)
     for area in settings.para_area_labels:
         if clean_name.upper() == area.upper():
-            # Return the label WITH emoji as used in Todoist
-            return f"{area} 📁"
+            # Return the label WITH folder emoji (same as parent projects)
+            return f"{area} 📂"
     
     return None
 
