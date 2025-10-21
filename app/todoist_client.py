@@ -130,6 +130,37 @@ class TodoistClient:
         data = await self._get(f"/projects/{project_id}")
         return TodoistProject(**data)
 
+    async def get_parent_project(self, project_id: str) -> Optional[TodoistProject]:
+        """
+        Get the parent project of a given project (if it has one).
+        
+        Args:
+            project_id: Todoist project ID
+            
+        Returns:
+            Parent TodoistProject if exists, None otherwise
+        """
+        try:
+            project = await self.get_project(project_id)
+            if project.parent_id:
+                logger.info(
+                    "Found parent project",
+                    extra={"project_id": project_id, "parent_id": project.parent_id},
+                )
+                return await self.get_project(project.parent_id)
+            else:
+                logger.debug(
+                    "Project has no parent",
+                    extra={"project_id": project_id},
+                )
+                return None
+        except Exception as e:
+            logger.debug(
+                "Could not fetch parent project",
+                extra={"project_id": project_id, "error": str(e)},
+            )
+            return None
+
     async def get_projects(self) -> List[TodoistProject]:
         """
         Fetch all projects.

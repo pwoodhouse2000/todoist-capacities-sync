@@ -114,6 +114,52 @@ class SyncWorker:
                     await self._handle_archive(message)
                 return
 
+        # NEW TASK: Inherit Area label from parent project if not already present
+        # This runs for new tasks (no existing_state) to auto-assign Area labels
+        if not existing_state and sync_source == "webhook":
+            from app.utils import extract_para_area, get_area_label_from_parent_project
+            
+            # Check if task already has an Area label
+            current_area = extract_para_area(task.labels)
+            
+            if not current_area:
+                # Try to inherit from parent project
+                try:
+                    parent_project = await self.todoist.get_parent_project(task.project_id)
+                    if parent_project:
+                        inherited_area = get_area_label_from_parent_project(parent_project.name)
+                        if inherited_area:
+                            # Add the inherited area label to the task
+                            new_labels = list(task.labels or []) + [inherited_area]
+                            await self.todoist.add_label_to_task(task_id, inherited_area, task.labels or [])
+                            task.labels = new_labels  # Update task object for downstream processing
+                            logger.info(
+                                "Inherited Area label from parent project",
+                                extra={
+                                    "task_id": task_id,
+                                    "parent_project": parent_project.name,
+                                    "area_label": inherited_area,
+                                },
+                            )
+                        else:
+                            logger.debug(
+                                "Parent project name did not match any Area",
+                                extra={
+                                    "task_id": task_id,
+                                    "parent_project": parent_project.name,
+                                },
+                            )
+                    else:
+                        logger.debug(
+                            "Task has no parent project",
+                            extra={"task_id": task_id},
+                        )
+                except Exception as e:
+                    logger.debug(
+                        "Could not inherit Area label from parent project",
+                        extra={"task_id": task_id, "error": str(e)},
+                    )
+
         # Fetch related data
         project = await self.todoist.get_project(task.project_id)
         comments = await self.todoist.get_comments(task_id)
