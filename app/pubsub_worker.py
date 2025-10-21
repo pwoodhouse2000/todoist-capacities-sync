@@ -117,7 +117,7 @@ class SyncWorker:
         # NEW TASK: Inherit Area label from parent project if not already present
         # This runs for new tasks (no existing_state) to auto-assign Area labels
         if not existing_state and sync_source == "webhook":
-            from app.utils import extract_para_area, get_area_label_from_parent_project
+            from app.utils import get_area_label_from_parent_project
             
             # Check if task already has an Area label
             current_area = extract_para_area(task.labels)
@@ -345,7 +345,6 @@ class SyncWorker:
             notion_page_id = existing_page["id"]
             # If the name/color/url changed, update the Notion project
             # Detect area from labels and include
-            from app.utils import extract_para_area
             area_name = extract_para_area(task_labels)
             area_page_id = None
             if area_name:
@@ -358,7 +357,6 @@ class SyncWorker:
         else:
             # Extract PARA area from task labels (projects don't have labels in Todoist)
             # We'll use the task's area label to categorize the project
-            from app.utils import extract_para_area
             area_name = extract_para_area(task_labels)
             area_page_id = None
             if area_name:
