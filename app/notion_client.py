@@ -70,6 +70,7 @@ class NotionClient:
             "Todoist URL": {"url": project.url},
             "Color": {"select": {"name": project.color}},
             "Is Shared": {"checkbox": project.is_shared},
+            "Status": {"select": {"name": "Active"}},
         }
         
         # Add AREAS relation if provided
@@ -119,6 +120,7 @@ class NotionClient:
             "Todoist URL": {"url": project.url},
             "Color": {"select": {"name": project.color}},
             "Is Shared": {"checkbox": project.is_shared},
+            "Status": {"select": {"name": "Active"}},
         }
 
         if area_page_id:
