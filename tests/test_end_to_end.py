@@ -106,6 +106,9 @@ class TestEndToEndSyncWorkflow:
         mock_notion_client.update_todo_page.assert_awaited_once_with(
             "existing_page_id",
             unittest.mock.ANY,  # The NotionToDo object
+            None,  # area_page_id
+            [],    # people_page_ids
+            project_page_id="proj_page_id",
         )
         mock_notion_client.create_todo_page.assert_not_awaited()
 

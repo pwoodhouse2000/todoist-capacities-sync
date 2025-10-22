@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from app.mapper import map_project_to_capacities, map_task_to_todo
+from app.mapper import map_project_to_notion, map_task_to_todo
 from app.models import TodoistComment, TodoistDue, TodoistProject, TodoistTask
 
 
@@ -148,7 +148,7 @@ def test_map_project_to_capacities() -> None:
         url="https://todoist.com/app/project/proj-1",
     )
 
-    capacities_project = map_project_to_capacities(project)
+    capacities_project = map_project_to_notion(project)
 
     assert capacities_project.todoist_project_id == "proj-1"
     assert capacities_project.name == "My Project"

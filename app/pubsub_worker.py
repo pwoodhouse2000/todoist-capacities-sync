@@ -86,8 +86,14 @@ class SyncWorker:
         # Fetch full task data from Todoist (or use snapshot if provided)
         if message.snapshot:
             logger.info("Using task snapshot from message")
-            # TODO: Parse snapshot into TodoistTask model
-            task = await self.todoist.get_task(task_id)
+            try:
+                task = TodoistTask(**message.snapshot)
+            except Exception as e:
+                logger.warning(
+                    "Could not parse task snapshot, falling back to API fetch",
+                    extra={"task_id": task_id, "error": str(e)},
+                )
+                task = await self.todoist.get_task(task_id)
         else:
             task = await self.todoist.get_task(task_id)
 
@@ -177,10 +183,10 @@ class SyncWorker:
         # Compute payload hash for idempotency
         payload_hash = compute_payload_hash(todo.model_dump())
 
-        # Check existing state
-        existing_state = await self.store.get_task_state(task_id)
-
         # Skip if unchanged (idempotency check)
+        # NOTE: We use the existing_state fetched at line 103, not a fresh fetch
+        # This is important because task.labels may have been modified (line 141)
+        # by the Area inheritance logic, so we must use the same state for consistency
         if existing_state and existing_state.payload_hash == payload_hash:
             logger.info(
                 "Task unchanged, skipping sync",
