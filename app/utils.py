@@ -154,44 +154,6 @@ def extract_person_labels(labels: List[str]) -> List[str]:
     return person_labels
 
 
-def get_area_label_from_parent_project(parent_project_name: Optional[str]) -> Optional[str]:
-    """
-    Try to match a parent project name to a PARA area label.
-    
-    This enables automatic inheritance of Area labels from parent projects.
-    Matching is case-insensitive and strips emoji from both sides.
-    Returns the label WITH same emoji as the parent project.
-    
-    Examples:
-        "PROSPER 📂" -> "PROSPER 📂"
-        "HEALTH 📂" -> "HEALTH 📂"
-        "PERSONAL & FAMILY 📂" -> "PERSONAL & FAMILY 📂"
-    
-    Args:
-        parent_project_name: Name of parent project
-        
-    Returns:
-        Area label name (with emoji) if match found, None otherwise
-    """
-    from app.settings import settings
-    
-    if not parent_project_name or not settings.enable_para_areas:
-        return None
-    
-    # Clean the parent project name (remove emoji)
-    clean_name = parent_project_name.strip()
-    while clean_name and ord(clean_name[-1]) > 127:
-        clean_name = clean_name[:-1].strip()
-    
-    # Try to match against defined PARA areas (case-insensitive)
-    for area in settings.para_area_labels:
-        if clean_name.upper() == area.upper():
-            # Return the label WITH folder emoji (same as parent projects)
-            return f"{area} 📂"
-    
-    return None
-
-
 def strip_notion_backlink(description: str) -> str:
     """
     Strip Notion backlink from task description to avoid circular sync.

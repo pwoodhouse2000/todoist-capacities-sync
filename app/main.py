@@ -173,7 +173,7 @@ async def process_pubsub(request: Request) -> Dict[str, Any]:
         
         logger.info(
             "Received Pub/Sub message",
-            extra={"pubsub_data": message_json},
+            extra={"message": message_json},
         )
         
         # Parse into PubSubMessage model
@@ -200,6 +200,35 @@ async def process_pubsub(request: Request) -> Dict[str, Any]:
         return {
             "status": "error",
             "error": str(e),
+        }
+
+
+@app.get("/test/reconcile")
+async def test_reconcile(request: Request) -> Dict[str, Any]:
+    """
+    Test reconcile endpoint that doesn't require authorization (for manual testing).
+    
+    Returns:
+        Reconciliation summary or error details
+    """
+    try:
+        # Check if running in local dev mode (no Firestore)
+        if not request.app.state.store:
+            return {
+                "status": "local_dev_mode",
+                "message": "Running in local dev mode without Firestore. Deploy to GCP for reconciliation.",
+            }
+        
+        # Run reconciliation
+        summary = await request.app.state.reconcile_handler.reconcile()
+        return summary
+        
+    except Exception as e:
+        logger.error("Error during test reconciliation", exc_info=True)
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__,
         }
 
 
@@ -267,178 +296,6 @@ async def reconcile(
         )
 
 
-@app.post("/admin/remove-duplicates")
-async def remove_duplicates(
-    request: Request,
-    authorization: str = Header(None),
-    dry_run: bool = True,
-) -> Dict[str, Any]:
-    """
-    Find and optionally remove duplicate Notion pages for the same Todoist task.
-    
-    Args:
-        request: FastAPI request object
-        authorization: Authorization header
-        dry_run: If True, only report duplicates without removing them
-        
-    Returns:
-        Summary of duplicates found and removed
-    """
-    # Check if running in production
-    if not request.app.state.store:
-        return {
-            "status": "local_dev_mode",
-            "message": "Running in local dev mode without Firestore.",
-        }
-    
-    # Verify authorization token
-    expected_token = f"Bearer {settings.internal_cron_token}"
-    if authorization != expected_token:
-        logger.warning("Unauthorized duplicate removal attempt")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization token",
-        )
-    
-    try:
-        logger.info(f"Finding duplicates (dry_run={dry_run})")
-        
-        # Query all pages in Tasks database
-        response = await request.app.state.notion_client.client.databases.query(
-            database_id=settings.notion_tasks_database_id,
-            page_size=100,
-        )
-        
-        # Group pages by Todoist Task ID
-        task_id_to_pages = {}
-        for page in response.get("results", []):
-            task_id_prop = page.get("properties", {}).get("Todoist Task ID", {})
-            if task_id_prop and "rich_text" in task_id_prop and task_id_prop["rich_text"]:
-                task_id = task_id_prop["rich_text"][0]["text"]["content"]
-                if task_id not in task_id_to_pages:
-                    task_id_to_pages[task_id] = []
-                task_id_to_pages[task_id].append(page)
-        
-        # Find duplicates (tasks with more than one page)
-        duplicates = {tid: pages for tid, pages in task_id_to_pages.items() if len(pages) > 1}
-        
-        removed = 0
-        if not dry_run:
-            # For each duplicate set, keep the most recent and archive the rest
-            for task_id, pages in duplicates.items():
-                # Sort by created_time, keep the newest
-                sorted_pages = sorted(pages, key=lambda p: p["created_time"], reverse=True)
-                newest_page = sorted_pages[0]
-                
-                logger.info(
-                    f"Keeping newest page for task {task_id}",
-                    extra={"task_id": task_id, "kept_page_id": newest_page["id"]},
-                )
-                
-                # Archive the older duplicates
-                for page in sorted_pages[1:]:
-                    try:
-                        await request.app.state.notion_client.archive_page(page["id"])
-                        removed += 1
-                        logger.info(
-                            f"Archived duplicate page",
-                            extra={"task_id": task_id, "page_id": page["id"]},
-                        )
-                    except Exception as e:
-                        logger.error(f"Error archiving duplicate page {page['id']}: {e}")
-        
-        return {
-            "status": "success" if not dry_run else "dry_run",
-            "duplicates_found": len(duplicates),
-            "duplicate_tasks": list(duplicates.keys()),
-            "pages_removed": removed if not dry_run else 0,
-            "message": "Duplicates found" if dry_run else f"Removed {removed} duplicate pages",
-        }
-        
-    except Exception as e:
-        logger.error("Error finding/removing duplicates", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error: {str(e)}",
-        )
-
-
-@app.post("/admin/reset-sync")
-async def reset_sync(
-    request: Request,
-    authorization: str = Header(None),
-) -> Dict[str, Any]:
-    """
-    Delete all synced tasks from Notion and clear Firestore state.
-    
-    This is a destructive operation - use with caution!
-    Requires authorization token in header.
-    
-    Args:
-        request: FastAPI request object
-        authorization: Authorization header
-        
-    Returns:
-        Reset summary
-    """
-    # Check if running in production
-    if not request.app.state.store:
-        return {
-            "status": "local_dev_mode",
-            "message": "Running in local dev mode without Firestore.",
-        }
-    
-    # Verify authorization token
-    expected_token = f"Bearer {settings.internal_cron_token}"
-    if authorization != expected_token:
-        logger.warning("Unauthorized reset attempt")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization token",
-        )
-    
-    try:
-        logger.warning("Starting sync reset - this will delete all synced data")
-        
-        # 1. Query all pages in Tasks database
-        pages_archived = 0
-        response = await request.app.state.notion_client.client.databases.query(
-            database_id=settings.notion_tasks_database_id,
-            page_size=100,
-        )
-        
-        # Archive all task pages
-        for page in response.get("results", []):
-            try:
-                await request.app.state.notion_client.archive_page(page["id"])
-                pages_archived += 1
-            except Exception as e:
-                logger.error(f"Error archiving page {page['id']}: {e}")
-        
-        # 2. Clear Firestore sync state
-        states_cleared = await request.app.state.store.clear_all_task_states()
-        
-        logger.info(
-            "Sync reset complete",
-            extra={"pages_archived": pages_archived, "states_cleared": states_cleared},
-        )
-        
-        return {
-            "status": "success",
-            "message": "All synced data has been cleared",
-            "pages_archived": pages_archived,
-            "states_cleared": states_cleared,
-            "note": "Run /reconcile to re-sync all tasks with @capsync label",
-        }
-        
-    except Exception as e:
-        logger.error("Error during reset", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error during reset: {str(e)}",
-        )
-
-
 @app.get("/")
 async def root(request: Request) -> Dict[str, Any]:
     """Root endpoint."""
@@ -470,9 +327,9 @@ async def test_todoist(request: Request, show_tasks: bool = False, capsync_only:
         # Optionally show tasks
         if show_tasks or capsync_only:
             if capsync_only:
-                # Get only tasks with capsync label (checks both "capsync" and "@capsync")
-                tasks = await request.app.state.todoist_client.get_active_tasks_with_label()
-                result["message"] = "Found tasks with capsync label"
+                # Get only tasks with @capsync label
+                tasks = await request.app.state.todoist_client.get_active_tasks_with_label("@capsync")
+                result["message"] = "Found tasks with @capsync label"
                 result["capsync_task_count"] = len(tasks)
             else:
                 # Get all tasks
@@ -557,6 +414,17 @@ async def test_sync_task(task_id: str, request: Request, dry_run: bool = True) -
         task_id: Todoist task ID to sync
         dry_run: If True, only simulate. If False, actually create in Notion.
     """
+    # Validate task_id format (Todoist IDs are numeric strings)
+    if not task_id.isdigit():
+        logger.warning(
+            "Invalid task ID format received",
+            extra={"task_id": task_id, "error": "Task ID must be numeric"},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid task ID format: '{task_id}'. Todoist task IDs must be numeric strings.",
+        )
+    
     try:
         from app.mapper import map_project_to_notion, map_task_to_todo
         from app.utils import has_capsync_label

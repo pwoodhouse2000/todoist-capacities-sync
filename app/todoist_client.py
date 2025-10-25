@@ -130,37 +130,6 @@ class TodoistClient:
         data = await self._get(f"/projects/{project_id}")
         return TodoistProject(**data)
 
-    async def get_parent_project(self, project_id: str) -> Optional[TodoistProject]:
-        """
-        Get the parent project of a given project (if it has one).
-        
-        Args:
-            project_id: Todoist project ID
-            
-        Returns:
-            Parent TodoistProject if exists, None otherwise
-        """
-        try:
-            project = await self.get_project(project_id)
-            if project.parent_id:
-                logger.info(
-                    "Found parent project",
-                    extra={"project_id": project_id, "parent_id": project.parent_id},
-                )
-                return await self.get_project(project.parent_id)
-            else:
-                logger.debug(
-                    "Project has no parent",
-                    extra={"project_id": project_id},
-                )
-                return None
-        except Exception as e:
-            logger.debug(
-                "Could not fetch parent project",
-                extra={"project_id": project_id, "error": str(e)},
-            )
-            return None
-
     async def get_projects(self) -> List[TodoistProject]:
         """
         Fetch all projects.
@@ -220,7 +189,10 @@ class TodoistClient:
 
     async def get_active_tasks_with_label(self, label: str = "capsync") -> List[TodoistTask]:
         """
-        Fetch all active tasks with the specified label.
+        Fetch all active tasks with the specified label using Todoist filter.
+        
+        This uses Todoist's server-side filter parameter for efficiency rather than
+        fetching all tasks and filtering client-side.
 
         Args:
             label: Label to filter by (default: "capsync")
@@ -229,32 +201,38 @@ class TodoistClient:
             List of TodoistTask objects
         """
         logger.info("Fetching active tasks with label", extra={"label": label})
-        # Note: Todoist API doesn't support direct label filtering in v2
-        # We need to fetch all tasks and filter client-side
-        # Check for both "@capsync" and "capsync" to handle both label formats
-        all_tasks = await self.get_tasks()
-        return [task for task in all_tasks if label in task.labels or f"@{label}" in task.labels]
-
-    async def get_completed_tasks_with_label(self, label: str = "capsync") -> List[TodoistTask]:
-        """
-        Fetch all completed tasks with the specified label.
         
-        Note: Todoist API state parameter allows fetching completed items.
-
-        Args:
-            label: Label to filter by (default: "capsync")
-
-        Returns:
-            List of completed TodoistTask objects
-        """
-        logger.info("Fetching completed tasks with label", extra={"label": label})
-        # Use state=completed to get completed tasks
-        # Manually call _get with state parameter since get_tasks() doesn't support it
-        params = {"state": "completed"}
-        data = await self._get("/tasks", params=params)
-        all_completed = [TodoistTask(**task) for task in data]
-        # Filter for tasks with the specified label
-        return [task for task in all_completed if label in task.labels or f"@{label}" in task.labels]
+        # Use Todoist's filter parameter for server-side filtering
+        # Remove @ if present since we want just the label name
+        label_filter = label.lstrip('@')
+        
+        # Use Todoist's filter syntax: @label_name for labels
+        params = {"filter": f"@{label_filter}"}
+        
+        try:
+            data = await self._get("/tasks", params=params)
+            tasks = [TodoistTask(**task) for task in data]
+            logger.info(
+                "Fetched tasks with label",
+                extra={"label": label_filter, "count": len(tasks)},
+            )
+            return tasks
+        except Exception as e:
+            logger.warning(
+                "Filter query failed, falling back to client-side filtering",
+                extra={"label": label_filter, "error": str(e)},
+            )
+            # Fallback to client-side filtering if filter parameter not supported
+            all_tasks = await self.get_tasks()
+            filtered_tasks = [
+                task for task in all_tasks 
+                if label in task.labels or f"@{label}" in task.labels
+            ]
+            logger.info(
+                "Fetched tasks with label (fallback)",
+                extra={"label": label_filter, "count": len(filtered_tasks)},
+            )
+            return filtered_tasks
 
     async def update_task_description(self, task_id: str, new_description: str) -> TodoistTask:
         """
