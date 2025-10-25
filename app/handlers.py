@@ -383,7 +383,7 @@ class ReconcileHandler:
                         logger.debug(f"Could not sync project {proj_id}: {e}")
 
 
-            # 2) Tasks: sync Name and Priority -> Todoist
+            # 2) Tasks: sync Name -> Todoist (Priority is Todoist-only, one-way sync)
             tasks = await self.notion.client.databases.query(
                 database_id=self.notion.tasks_db_id,
                 page_size=100, # Fetch more tasks
@@ -398,23 +398,15 @@ class ReconcileHandler:
                 # Safely get task ID
                 todoist_id_prop = props.get("Todoist Task ID", {}).get("rich_text")
                 todoist_id = todoist_id_prop[0].get("text", {}).get("content") if todoist_id_prop else None
-
-                priority_select = props.get("Priority", {}).get("select", {}).get("name")
                 
                 if not todoist_id:
                     continue
                 try:
                     td_task = await self.todoist.get_task(todoist_id)
-                    # Title
+                    # Title sync only (Priority is one-way: Todoist → Notion)
                     if title and td_task.content != title:
                         await self.todoist.update_task_title(todoist_id, title)
                         logger.info("Updated Todoist task title from Notion", extra={"task_id": todoist_id})
-                    # Priority
-                    if priority_select and priority_select.startswith("P"):
-                        prio = int(priority_select[1:])
-                        if prio != td_task.priority:
-                            await self.todoist.update_task_priority(todoist_id, prio)
-                            logger.info("Updated Todoist task priority from Notion", extra={"task_id": todoist_id, "priority": prio})
                 except Exception as e:
                     logger.debug(f"Could not sync task {todoist_id}: {e}")
         except Exception as e:
