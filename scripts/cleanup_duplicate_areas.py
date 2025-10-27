@@ -204,29 +204,31 @@ class AreaDuplicateCleaner:
         print(f"  📌 Canonical: {canonical_id[:8]}... (created: {canonical.get('created_time', 'unknown')})")
         
         # For each duplicate, migrate relations and delete
-        for dup in duplicates:
+        for idx, dup in enumerate(duplicates, 1):
             dup_id = dup["id"]
-            print(f"  🗑️  Duplicate: {dup_id[:8]}... (created: {dup.get('created_time', 'unknown')})")
+            print(f"  🗑️  Duplicate {idx}/{len(duplicates)}: {dup_id[:8]}... (created: {dup.get('created_time', 'unknown')})")
             
-            # Find all tasks relating to this duplicate
-            related_tasks = await self.get_related_items(dup_id, self.tasks_db_id, "AREAS")
-            if related_tasks:
-                print(f"     → Migrating {len(related_tasks)} tasks to canonical")
-                for task_id in related_tasks:
-                    # Update task to point to canonical instead
-                    await self.update_relation(task_id, "AREAS", [canonical_id])
-            
-            # Find all projects relating to this duplicate
-            related_projects = await self.get_related_items(dup_id, self.projects_db_id, "AREAS")
-            if related_projects:
-                print(f"     → Migrating {len(related_projects)} projects to canonical")
-                for project_id in related_projects:
-                    # Update project to point to canonical instead
-                    await self.update_relation(project_id, "AREAS", [canonical_id])
+            # In dry-run mode, skip relation checking to avoid rate limits
+            if not self.dry_run:
+                # Find all tasks relating to this duplicate
+                related_tasks = await self.get_related_items(dup_id, self.tasks_db_id, "AREAS")
+                if related_tasks:
+                    print(f"     → Migrating {len(related_tasks)} tasks to canonical")
+                    for task_id in related_tasks:
+                        # Update task to point to canonical instead
+                        await self.update_relation(task_id, "AREAS", [canonical_id])
+                
+                # Find all projects relating to this duplicate
+                related_projects = await self.get_related_items(dup_id, self.projects_db_id, "AREAS")
+                if related_projects:
+                    print(f"     → Migrating {len(related_projects)} projects to canonical")
+                    for project_id in related_projects:
+                        # Update project to point to canonical instead
+                        await self.update_relation(project_id, "AREAS", [canonical_id])
             
             # Delete the duplicate
             if self.dry_run:
-                print(f"     → [DRY RUN] Would delete duplicate {dup_id[:8]}...")
+                print(f"     → [DRY RUN] Would migrate relations and delete duplicate {dup_id[:8]}...")
             else:
                 await self.delete_page(dup_id)
                 print(f"     → ✅ Deleted duplicate {dup_id[:8]}...")

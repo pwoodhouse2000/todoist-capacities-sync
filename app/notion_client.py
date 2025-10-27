@@ -1,7 +1,9 @@
 """Notion API client for creating and updating pages in databases."""
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
+import httpx
 from notion_client import AsyncClient
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -39,6 +41,74 @@ class NotionClient:
         self.areas_db_id = areas_database_id or settings.notion_areas_database_id
         self.people_db_id = people_database_id or settings.notion_people_database_id
         self.client = AsyncClient(auth=self.api_key)
+        
+        # HTTP client for direct API calls (bypassing broken client.databases.query)
+        self._http_client = httpx.AsyncClient(
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json",
+            },
+            timeout=30.0
+        )
+        
+        # Locks for preventing race conditions in area creation
+        self._area_locks: Dict[str, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()  # Lock for the locks dict
+
+    async def _query_database_direct(
+        self,
+        database_id: str,
+        filter: Optional[Dict] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Query Notion database using direct HTTP API call.
+        
+        This bypasses the broken client.databases.query() method that fails
+        with AttributeError: 'DatabasesEndpoint' object has no attribute 'query'
+        
+        Args:
+            database_id: Notion database ID
+            filter: Query filter (optional)
+            **kwargs: Additional query parameters (page_size, start_cursor, etc.)
+        
+        Returns:
+            Query response dict with 'results', 'has_more', 'next_cursor'
+        """
+        url = f"https://api.notion.com/v1/databases/{database_id}/query"
+        
+        body = {}
+        if filter:
+            body["filter"] = filter
+        body.update(kwargs)
+        
+        logger.debug(
+            "Direct HTTP database query",
+            extra={"database_id": database_id[:8], "has_filter": filter is not None}
+        )
+        
+        response = await self._http_client.post(url, json=body)
+        response.raise_for_status()
+        return response.json()
+    
+    async def _get_area_lock(self, area_name: str) -> asyncio.Lock:
+        """
+        Get or create a lock for a specific area name.
+        
+        This prevents race conditions where multiple workers try to create
+        the same area simultaneously.
+        
+        Args:
+            area_name: PARA area name (e.g., "HOME", "PROSPER")
+        
+        Returns:
+            Lock for this area name
+        """
+        async with self._locks_lock:
+            if area_name not in self._area_locks:
+                self._area_locks[area_name] = asyncio.Lock()
+            return self._area_locks[area_name]
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -349,7 +419,8 @@ class NotionClient:
         )
 
         try:
-            result = await self.client.databases.query(
+            # Use direct HTTP call instead of broken client.databases.query()
+            result = await self._query_database_direct(
                 database_id=self.projects_db_id,
                 filter={
                     "property": "Todoist Project ID",
@@ -360,13 +431,6 @@ class NotionClient:
             if result["results"]:
                 return result["results"][0]
 
-            return None
-        except (AttributeError, TypeError) as e:
-            logger.warning(
-                "Notion client API error - skipping project lookup",
-                extra={"todoist_project_id": todoist_project_id, "error": str(e), "error_type": type(e).__name__},
-            )
-            # Return None to gracefully skip - projects will be created/managed as needed
             return None
         except Exception as e:
             logger.warning(
@@ -391,7 +455,8 @@ class NotionClient:
         )
 
         try:
-            result = await self.client.databases.query(
+            # Use direct HTTP call instead of broken client.databases.query()
+            result = await self._query_database_direct(
                 database_id=self.tasks_db_id,
                 filter={
                     "property": "Todoist Task ID",
@@ -402,13 +467,6 @@ class NotionClient:
             if result["results"]:
                 return result["results"][0]
 
-            return None
-        except (AttributeError, TypeError) as e:
-            logger.warning(
-                "Notion client API error - skipping todo lookup",
-                extra={"todoist_task_id": todoist_task_id, "error": str(e), "error_type": type(e).__name__},
-            )
-            # Return None to gracefully skip - tasks will be created/managed as needed
             return None
         except Exception as e:
             logger.warning(
@@ -451,7 +509,8 @@ class NotionClient:
         logger.info("Searching for area in AREAS database", extra={"area_name": area_name})
 
         try:
-            response = await self.client.databases.query(
+            # Use direct HTTP call instead of broken client.databases.query()
+            response = await self._query_database_direct(
                 database_id=self.areas_db_id,
                 filter={
                     "property": "Name",
@@ -467,12 +526,6 @@ class NotionClient:
                 )
                 return results[0]
 
-            return None
-        except (AttributeError, TypeError) as e:
-            logger.warning(
-                "Notion client API error - skipping area lookup",
-                extra={"area_name": area_name, "error": str(e), "error_type": type(e).__name__},
-            )
             return None
         except Exception as e:
             logger.warning(
@@ -515,6 +568,9 @@ class NotionClient:
     async def ensure_area_exists(self, area_name: str) -> Optional[str]:
         """
         Ensure an area page exists, create if needed.
+        
+        Uses locking to prevent race conditions where multiple workers
+        try to create the same area simultaneously.
 
         Args:
             area_name: Area name (e.g., "PROSPER", "HOME")
@@ -524,15 +580,22 @@ class NotionClient:
         """
         if not self.areas_db_id:
             return None
-            
-        # Try to find existing area
-        existing_area = await self.find_area_by_name(area_name)
-        if existing_area:
-            return existing_area["id"]
+        
+        # Acquire lock for this specific area to prevent race conditions
+        lock = await self._get_area_lock(area_name)
+        async with lock:
+            # Check again after acquiring lock (double-checked locking pattern)
+            existing_area = await self.find_area_by_name(area_name)
+            if existing_area:
+                return existing_area["id"]
 
-        # Create new area
-        new_area = await self.create_area_page(area_name)
-        return new_area["id"]
+            # Still doesn't exist, create it
+            logger.info(
+                "Creating new area (with lock protection)",
+                extra={"area_name": area_name}
+            )
+            new_area = await self.create_area_page(area_name)
+            return new_area["id"]
 
     async def find_person_by_name(self, person_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -558,19 +621,21 @@ class NotionClient:
         
         try:
             # Query all people with pagination (we'll do fuzzy matching client-side)
+            # Use direct HTTP call instead of broken client.databases.query()
             results = []
             has_more = True
             start_cursor = None
             
             while has_more:
-                query_params = {
-                    "database_id": self.people_db_id,
-                    "page_size": 100,
-                }
+                query_params = {}
                 if start_cursor:
                     query_params["start_cursor"] = start_cursor
+                query_params["page_size"] = 100
                     
-                response = await self.client.databases.query(**query_params)
+                response = await self._query_database_direct(
+                    database_id=self.people_db_id,
+                    **query_params
+                )
                 results.extend(response.get("results", []))
                 
                 has_more = response.get("has_more", False)
@@ -618,12 +683,6 @@ class NotionClient:
             logger.info(
                 "No matching person found",
                 extra={"person_name": person_name},
-            )
-            return None
-        except (AttributeError, TypeError) as e:
-            logger.warning(
-                "Notion client API error - skipping person lookup",
-                extra={"person_name": person_name, "error": str(e), "error_type": type(e).__name__},
             )
             return None
         except Exception as e:
