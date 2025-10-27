@@ -235,9 +235,27 @@ class ReconcileHandler:
         # Step 3a: Pull edits from Notion back to Todoist (titles + priority + project titles)
         await self._reconcile_notion_to_todoist()
 
-        # Step 3b: Fetch all Todoist tasks with capsync label (checks both "capsync" and "@capsync")
+        # Step 3b: Fetch all Todoist tasks with capsync label (both active AND completed)
+        # We need to include completed tasks so they can be marked as completed in Notion
         active_tasks = await self.todoist.get_active_tasks_with_label()
-        active_task_ids = {task.id for task in active_tasks}
+        
+        # Also fetch completed tasks with capsync label (they need to sync to Notion too)
+        try:
+            completed_tasks_response = await self.todoist._get(
+                "/tasks",
+                params={"filter": "@capsync & is:completed"}
+            )
+            completed_tasks = [TodoistTask(**task) for task in completed_tasks_response]
+        except Exception as e:
+            logger.warning(
+                "Could not fetch completed tasks, continuing with active tasks only",
+                extra={"error": str(e)},
+            )
+            completed_tasks = []
+        
+        # Combine active and completed tasks
+        all_fetched_tasks = active_tasks + completed_tasks
+        active_task_ids = {task.id for task in all_fetched_tasks}
 
         logger.info(
             "Found active tasks with capsync label",
@@ -248,9 +266,9 @@ class ReconcileHandler:
         stored_states = await self.store.get_all_task_states()
         stored_task_ids = {state.todoist_task_id for state in stored_states}
 
-        # Process active tasks (upsert)
+        # Process active and completed tasks (upsert)
         upserted = 0
-        for task in active_tasks:
+        for task in all_fetched_tasks:
             try:
                 message = PubSubMessage(
                     action=SyncAction.UPSERT,
