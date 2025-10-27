@@ -348,18 +348,31 @@ class NotionClient:
             extra={"todoist_project_id": todoist_project_id},
         )
 
-        result = await self.client.databases.query(
-            database_id=self.projects_db_id,
-            filter={
-                "property": "Todoist Project ID",
-                "rich_text": {"equals": todoist_project_id},
-            },
-        )
+        try:
+            result = await self.client.databases.query(
+                database_id=self.projects_db_id,
+                filter={
+                    "property": "Todoist Project ID",
+                    "rich_text": {"equals": todoist_project_id},
+                },
+            )
 
-        if result["results"]:
-            return result["results"][0]
+            if result["results"]:
+                return result["results"][0]
 
-        return None
+            return None
+        except AttributeError as e:
+            logger.warning(
+                "Notion client error finding project - databases.query() not available",
+                extra={"todoist_project_id": todoist_project_id, "error": str(e)},
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "Error finding project by Todoist ID",
+                extra={"todoist_project_id": todoist_project_id, "error": str(e)},
+            )
+            return None
 
     async def find_todo_by_todoist_id(self, todoist_task_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -376,18 +389,31 @@ class NotionClient:
             extra={"todoist_task_id": todoist_task_id},
         )
 
-        result = await self.client.databases.query(
-            database_id=self.tasks_db_id,
-            filter={
-                "property": "Todoist Task ID",
-                "rich_text": {"equals": todoist_task_id},
-            },
-        )
+        try:
+            result = await self.client.databases.query(
+                database_id=self.tasks_db_id,
+                filter={
+                    "property": "Todoist Task ID",
+                    "rich_text": {"equals": todoist_task_id},
+                },
+            )
 
-        if result["results"]:
-            return result["results"][0]
+            if result["results"]:
+                return result["results"][0]
 
-        return None
+            return None
+        except AttributeError as e:
+            logger.warning(
+                "Notion client error finding todo - databases.query() not available",
+                extra={"todoist_task_id": todoist_task_id, "error": str(e)},
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "Error finding todo by Todoist ID",
+                extra={"todoist_task_id": todoist_task_id, "error": str(e)},
+            )
+            return None
 
     async def archive_page(self, page_id: str) -> Dict[str, Any]:
         """
