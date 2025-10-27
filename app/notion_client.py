@@ -361,11 +361,12 @@ class NotionClient:
                 return result["results"][0]
 
             return None
-        except AttributeError as e:
+        except (AttributeError, TypeError) as e:
             logger.warning(
-                "Notion client error finding project - databases.query() not available",
-                extra={"todoist_project_id": todoist_project_id, "error": str(e)},
+                "Notion client API error - skipping project lookup",
+                extra={"todoist_project_id": todoist_project_id, "error": str(e), "error_type": type(e).__name__},
             )
+            # Return None to gracefully skip - projects will be created/managed as needed
             return None
         except Exception as e:
             logger.warning(
@@ -402,11 +403,12 @@ class NotionClient:
                 return result["results"][0]
 
             return None
-        except AttributeError as e:
+        except (AttributeError, TypeError) as e:
             logger.warning(
-                "Notion client error finding todo - databases.query() not available",
-                extra={"todoist_task_id": todoist_task_id, "error": str(e)},
+                "Notion client API error - skipping todo lookup",
+                extra={"todoist_task_id": todoist_task_id, "error": str(e), "error_type": type(e).__name__},
             )
+            # Return None to gracefully skip - tasks will be created/managed as needed
             return None
         except Exception as e:
             logger.warning(
@@ -448,23 +450,36 @@ class NotionClient:
             
         logger.info("Searching for area in AREAS database", extra={"area_name": area_name})
 
-        response = await self.client.databases.query(
-            database_id=self.areas_db_id,
-            filter={
-                "property": "Name",
-                "title": {"equals": area_name},
-            },
-        )
-
-        results = response.get("results", [])
-        if results:
-            logger.info(
-                "Found existing area page",
-                extra={"area_name": area_name, "page_id": results[0]["id"]},
+        try:
+            response = await self.client.databases.query(
+                database_id=self.areas_db_id,
+                filter={
+                    "property": "Name",
+                    "title": {"equals": area_name},
+                },
             )
-            return results[0]
 
-        return None
+            results = response.get("results", [])
+            if results:
+                logger.info(
+                    "Found existing area page",
+                    extra={"area_name": area_name, "page_id": results[0]["id"]},
+                )
+                return results[0]
+
+            return None
+        except (AttributeError, TypeError) as e:
+            logger.warning(
+                "Notion client API error - skipping area lookup",
+                extra={"area_name": area_name, "error": str(e), "error_type": type(e).__name__},
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "Error finding area by name",
+                extra={"area_name": area_name, "error": str(e)},
+            )
+            return None
 
     async def create_area_page(self, area_name: str) -> Dict[str, Any]:
         """
@@ -541,69 +556,82 @@ class NotionClient:
             extra={"person_name": person_name},
         )
         
-        # Query all people with pagination (we'll do fuzzy matching client-side)
-        results = []
-        has_more = True
-        start_cursor = None
-        
-        while has_more:
-            query_params = {
-                "database_id": self.people_db_id,
-                "page_size": 100,
-            }
-            if start_cursor:
-                query_params["start_cursor"] = start_cursor
-                
-            response = await self.client.databases.query(**query_params)
-            results.extend(response.get("results", []))
+        try:
+            # Query all people with pagination (we'll do fuzzy matching client-side)
+            results = []
+            has_more = True
+            start_cursor = None
             
-            has_more = response.get("has_more", False)
-            start_cursor = response.get("next_cursor")
-        
-        logger.info(
-            "Fetched all people from database",
-            extra={"person_name": person_name, "total_people": len(results)},
-        )
-        
-        # Try exact match first
-        for page in results:
-            title_prop = page.get("properties", {}).get("Name", {})
-            if title_prop and "title" in title_prop and title_prop["title"]:
-                page_name = title_prop["title"][0]["text"]["content"]
+            while has_more:
+                query_params = {
+                    "database_id": self.people_db_id,
+                    "page_size": 100,
+                }
+                if start_cursor:
+                    query_params["start_cursor"] = start_cursor
+                    
+                response = await self.client.databases.query(**query_params)
+                results.extend(response.get("results", []))
                 
-                # Exact match (case-insensitive)
-                if page_name.lower() == person_name.lower():
-                    logger.info(
-                        "Found person (exact match)",
-                        extra={"label": person_name, "notion_name": page_name, "page_id": page["id"]},
-                    )
-                    return page
-        
-        # Try fuzzy matching - check if label is contained in or contains the page name
-        for page in results:
-            title_prop = page.get("properties", {}).get("Name", {})
-            if title_prop and "title" in title_prop and title_prop["title"]:
-                page_name = title_prop["title"][0]["text"]["content"]
-                
-                # Fuzzy match: "DougD" matches "Doug Diego"
-                label_lower = person_name.lower()
-                name_lower = page_name.lower()
-                
-                # Check if label starts with page name or vice versa
-                if (label_lower in name_lower or name_lower in label_lower or
-                    label_lower.startswith(name_lower.split()[0]) or
-                    name_lower.startswith(label_lower)):
-                    logger.info(
-                        "Found person (fuzzy match)",
-                        extra={"label": person_name, "notion_name": page_name, "page_id": page["id"]},
-                    )
-                    return page
-        
-        logger.info(
-            "No matching person found",
-            extra={"person_name": person_name},
-        )
-        return None
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
+            
+            logger.info(
+                "Fetched all people from database",
+                extra={"person_name": person_name, "total_people": len(results)},
+            )
+            
+            # Try exact match first
+            for page in results:
+                title_prop = page.get("properties", {}).get("Name", {})
+                if title_prop and "title" in title_prop and title_prop["title"]:
+                    page_name = title_prop["title"][0]["text"]["content"]
+                    
+                    # Exact match (case-insensitive)
+                    if page_name.lower() == person_name.lower():
+                        logger.info(
+                            "Found person (exact match)",
+                            extra={"label": person_name, "notion_name": page_name, "page_id": page["id"]},
+                        )
+                        return page
+            
+            # Try fuzzy matching - check if label is contained in or contains the page name
+            for page in results:
+                title_prop = page.get("properties", {}).get("Name", {})
+                if title_prop and "title" in title_prop and title_prop["title"]:
+                    page_name = title_prop["title"][0]["text"]["content"]
+                    
+                    # Fuzzy match: "DougD" matches "Doug Diego"
+                    label_lower = person_name.lower()
+                    name_lower = page_name.lower()
+                    
+                    # Check if label starts with page name or vice versa
+                    if (label_lower in name_lower or name_lower in label_lower or
+                        label_lower.startswith(name_lower.split()[0]) or
+                        name_lower.startswith(label_lower)):
+                        logger.info(
+                            "Found person (fuzzy match)",
+                            extra={"label": person_name, "notion_name": page_name, "page_id": page["id"]},
+                        )
+                        return page
+            
+            logger.info(
+                "No matching person found",
+                extra={"person_name": person_name},
+            )
+            return None
+        except (AttributeError, TypeError) as e:
+            logger.warning(
+                "Notion client API error - skipping person lookup",
+                extra={"person_name": person_name, "error": str(e), "error_type": type(e).__name__},
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "Error finding person by name",
+                extra={"person_name": person_name, "error": str(e)},
+            )
+            return None
 
     async def match_people(self, person_names: List[str]) -> List[str]:
         """
