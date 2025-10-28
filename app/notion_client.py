@@ -1,6 +1,5 @@
 """Notion API client for creating and updating pages in databases."""
 
-import asyncio
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -51,10 +50,6 @@ class NotionClient:
             },
             timeout=30.0
         )
-        
-        # Locks for preventing race conditions in area creation
-        self._area_locks: Dict[str, asyncio.Lock] = {}
-        self._locks_lock = asyncio.Lock()  # Lock for the locks dict
 
     async def _query_database_direct(
         self,
@@ -92,23 +87,6 @@ class NotionClient:
         response.raise_for_status()
         return response.json()
     
-    async def _get_area_lock(self, area_name: str) -> asyncio.Lock:
-        """
-        Get or create a lock for a specific area name.
-        
-        This prevents race conditions where multiple workers try to create
-        the same area simultaneously.
-        
-        Args:
-            area_name: PARA area name (e.g., "HOME", "PROSPER")
-        
-        Returns:
-            Lock for this area name
-        """
-        async with self._locks_lock:
-            if area_name not in self._area_locks:
-                self._area_locks[area_name] = asyncio.Lock()
-            return self._area_locks[area_name]
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -117,14 +95,14 @@ class NotionClient:
     async def create_project_page(
         self, 
         project: NotionProject, 
-        area_page_id: Optional[str] = None
+        area_page_ids: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Create a project page in Notion.
 
         Args:
             project: NotionProject model with data
-            area_page_id: Optional AREAS page ID for PARA method
+            area_page_ids: Optional list of AREAS page IDs for PARA method (supports multiple)
 
         Returns:
             Created page data from Notion
@@ -143,9 +121,9 @@ class NotionClient:
             "Status": {"select": {"name": "Active"}},
         }
         
-        # Add AREAS relation if provided
-        if area_page_id:
-            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+        # Add AREAS relations if provided (supports multiple areas)
+        if area_page_ids:
+            properties["AREAS"] = {"relation": [{"id": aid} for aid in area_page_ids]}
 
         result = await self.client.pages.create(
             parent={"database_id": self.projects_db_id},
@@ -167,15 +145,18 @@ class NotionClient:
         self,
         page_id: str,
         project: NotionProject,
-        area_page_id: Optional[str] = None,
+        area_page_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Update an existing Notion project page.
+        
+        Per sync rules: AREAS are NOT updated post-creation (Notion-controlled).
+        Pass None for area_page_ids to skip area updates.
 
         Args:
             page_id: Notion page ID
             project: NotionProject model with latest data
-            area_page_id: Optional AREAS relation to set
+            area_page_ids: Optional list of AREAS relations to set (typically None for updates)
 
         Returns:
             Updated page data
@@ -193,8 +174,9 @@ class NotionClient:
             "Status": {"select": {"name": "Active"}},
         }
 
-        if area_page_id:
-            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+        # Only update AREAS if explicitly provided (typically None for post-creation updates)
+        if area_page_ids is not None:
+            properties["AREAS"] = {"relation": [{"id": aid} for aid in area_page_ids]}
 
         result = await self.client.pages.update(page_id=page_id, properties=properties)
 
@@ -227,7 +209,7 @@ class NotionClient:
         self,
         todo: NotionToDo,
         project_page_id: Optional[str] = None,
-        area_page_id: Optional[str] = None,
+        area_page_ids: Optional[List[str]] = None,
         people_page_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
@@ -236,7 +218,7 @@ class NotionClient:
         Args:
             todo: NotionToDo model with data
             project_page_id: Notion page ID of the related project
-            area_page_id: Optional AREAS page ID for PARA method
+            area_page_ids: Optional list of AREAS page IDs for PARA method (supports multiple)
             people_page_ids: Optional list of People page IDs for person assignments
 
         Returns:
@@ -260,9 +242,9 @@ class NotionClient:
         if project_page_id:
             properties["Project"] = {"relation": [{"id": project_page_id}]}
 
-        # Add AREAS relation if provided (PARA method)
-        if area_page_id:
-            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+        # Add AREAS relations if provided (PARA method - supports multiple areas)
+        if area_page_ids:
+            properties["AREAS"] = {"relation": [{"id": aid} for aid in area_page_ids]}
 
         # Add People relations if provided
         if people_page_ids:
@@ -347,7 +329,7 @@ class NotionClient:
         self,
         page_id: str,
         todo: NotionToDo,
-        area_page_id: Optional[str] = None,
+        area_page_ids: Optional[List[str]] = None,
         people_page_ids: Optional[List[str]] = None,
         project_page_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -357,8 +339,9 @@ class NotionClient:
         Args:
             page_id: Notion page ID to update
             todo: NotionToDo model with updated data
-            area_page_id: Optional AREAS page ID for PARA method
+            area_page_ids: Optional list of AREAS page IDs for PARA method (supports multiple)
             people_page_ids: Optional list of People page IDs for person assignments
+            project_page_id: Optional project page ID (for task moves)
 
         Returns:
             Updated page data from Notion
@@ -382,9 +365,9 @@ class NotionClient:
         if todo.todoist_labels:
             properties["Labels"] = {"multi_select": [{"name": label} for label in todo.todoist_labels]}
 
-        # Update AREAS relation if provided
-        if area_page_id:
-            properties["AREAS"] = {"relation": [{"id": area_page_id}]}
+        # Update AREAS relations if provided (supports multiple areas)
+        if area_page_ids:
+            properties["AREAS"] = {"relation": [{"id": aid} for aid in area_page_ids]}
 
         # Update People relations if provided
         if people_page_ids:
@@ -567,35 +550,36 @@ class NotionClient:
 
     async def ensure_area_exists(self, area_name: str) -> Optional[str]:
         """
-        Ensure an area page exists, create if needed.
+        Find an area page by name. NEVER creates areas automatically.
         
-        Uses locking to prevent race conditions where multiple workers
-        try to create the same area simultaneously.
+        Per sync rules: Areas must be manually created in Notion AREAS DB first.
+        This prevents duplicate area creation and respects user-defined areas.
 
         Args:
             area_name: Area name (e.g., "PROSPER", "HOME")
 
         Returns:
-            Area page ID, or None if AREAS database not configured
+            Area page ID if found, None if not found or AREAS database not configured
         """
         if not self.areas_db_id:
             return None
         
-        # Acquire lock for this specific area to prevent race conditions
-        lock = await self._get_area_lock(area_name)
-        async with lock:
-            # Check again after acquiring lock (double-checked locking pattern)
-            existing_area = await self.find_area_by_name(area_name)
-            if existing_area:
-                return existing_area["id"]
-
-            # Still doesn't exist, create it
-            logger.info(
-                "Creating new area (with lock protection)",
-                extra={"area_name": area_name}
+        # Look up existing area (no lock needed since we're not creating)
+        existing_area = await self.find_area_by_name(area_name)
+        if existing_area:
+            logger.debug(
+                "Found existing area",
+                extra={"area_name": area_name, "page_id": existing_area["id"]}
             )
-            new_area = await self.create_area_page(area_name)
-            return new_area["id"]
+            return existing_area["id"]
+
+        # Area not found - log warning and return None
+        # User must manually create area in Notion AREAS DB first
+        logger.warning(
+            "Area not found in AREAS database - skipping relation. Create area manually in Notion first.",
+            extra={"area_name": area_name}
+        )
+        return None
 
     async def find_person_by_name(self, person_name: str) -> Optional[Dict[str, Any]]:
         """

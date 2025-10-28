@@ -150,23 +150,28 @@ class ReconcileHandler:
 
     async def _auto_label_tasks(self) -> int:
         """
-        Auto-add capsync label to eligible tasks.
+        Auto-add/remove capsync label based on task eligibility.
         
-        Eligible tasks are:
+        ADD label if task is:
         - Not completed
         - Not in Inbox
         - Not recurring
-        - Don't already have capsync label
+        - Doesn't already have capsync label
+        
+        REMOVE label if task is:
+        - Recurring (changed from one-off)
+        - In Inbox (moved from project)
+        - Has capsync label
         
         Returns:
-            Number of tasks that were auto-labeled
+            Number of tasks that were auto-labeled/unlabeled
         """
         # Check if auto-labeling is enabled
         if not settings.auto_label_tasks:
             logger.info("Auto-labeling is disabled")
             return 0
         
-        logger.info("Auto-labeling eligible tasks")
+        logger.info("Auto-labeling/unlabeling eligible tasks")
         
         # Fetch all active (non-completed) tasks
         all_tasks = await self.todoist.get_tasks()
@@ -176,14 +181,11 @@ class ReconcileHandler:
         inbox_project_ids = {p.id for p in all_projects if p.name == "Inbox"}
         
         auto_labeled = 0
+        auto_unlabeled = 0
         
         for task in all_tasks:
             # Skip completed tasks
             if task.is_completed:
-                continue
-            
-            # Skip if already has capsync label
-            if has_capsync_label(task.labels):
                 continue
             
             # Check if task is recurring
@@ -192,8 +194,14 @@ class ReconcileHandler:
             # Check if task is in Inbox
             is_inbox = task.project_id in inbox_project_ids
             
-            # Determine if task should be auto-labeled
-            if should_auto_label_task(task.project_id, is_recurring, is_inbox):
+            # Check if task currently has capsync label
+            has_label = has_capsync_label(task.labels)
+            
+            # Determine if task SHOULD be labeled
+            should_label = should_auto_label_task(task.project_id, is_recurring, is_inbox)
+            
+            # ADD label if eligible and doesn't have it
+            if should_label and not has_label:
                 try:
                     await self.todoist.add_label_to_task(task.id, "capsync", task.labels)
                     auto_labeled += 1
@@ -206,13 +214,37 @@ class ReconcileHandler:
                         "Error adding label to task",
                         extra={"task_id": task.id, "error": str(e)},
                     )
+            
+            # REMOVE label if no longer eligible but still has it
+            elif not should_label and has_label:
+                try:
+                    await self.todoist.remove_label_from_task(task.id, "capsync", task.labels)
+                    auto_unlabeled += 1
+                    logger.info(
+                        "Auto-removed capsync label from task (became ineligible)",
+                        extra={
+                            "task_id": task.id,
+                            "content": task.content,
+                            "is_recurring": is_recurring,
+                            "is_inbox": is_inbox
+                        },
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error removing label from task",
+                        extra={"task_id": task.id, "error": str(e)},
+                    )
         
         logger.info(
             "Auto-labeling complete",
-            extra={"auto_labeled": auto_labeled, "total_checked": len(all_tasks)},
+            extra={
+                "auto_labeled": auto_labeled,
+                "auto_unlabeled": auto_unlabeled,
+                "total_checked": len(all_tasks)
+            },
         )
         
-        return auto_labeled
+        return auto_labeled + auto_unlabeled
 
     async def reconcile(self) -> Dict[str, Any]:
         """
@@ -372,10 +404,14 @@ class ReconcileHandler:
 
     async def _reconcile_notion_to_todoist(self) -> None:
         """
-        Pull selected edits from Notion into Todoist (titles and priority).
+        Pull selected edits from Notion into Todoist.
+        
+        Per sync rules:
+        - Projects: Name is bidirectional (Notion wins post-creation)
+        - Tasks: ALL properties are one-way (Todoist always wins)
         """
         try:
-            # 1) Projects: sync Name -> Todoist project name
+            # 1) Projects: sync Name -> Todoist project name (bidirectional)
             projects = await self.notion.client.databases.query(
                 database_id=self.notion.projects_db_id,
                 page_size=100,  # Fetch more projects
@@ -400,33 +436,10 @@ class ReconcileHandler:
                     except Exception as e:
                         logger.debug(f"Could not sync project {proj_id}: {e}")
 
-
-            # 2) Tasks: sync Name -> Todoist (Priority is Todoist-only, one-way sync)
-            tasks = await self.notion.client.databases.query(
-                database_id=self.notion.tasks_db_id,
-                page_size=100, # Fetch more tasks
-            )
-            for page in tasks.get("results", []):
-                props = page.get("properties", {})
-
-                # Safely get title
-                title_prop = props.get("Name", {}).get("title")
-                title = title_prop[0].get("text", {}).get("content") if title_prop else None
-
-                # Safely get task ID
-                todoist_id_prop = props.get("Todoist Task ID", {}).get("rich_text")
-                todoist_id = todoist_id_prop[0].get("text", {}).get("content") if todoist_id_prop else None
-                
-                if not todoist_id:
-                    continue
-                try:
-                    td_task = await self.todoist.get_task(todoist_id)
-                    # Title sync only (Priority is one-way: Todoist → Notion)
-                    if title and td_task.content != title:
-                        await self.todoist.update_task_title(todoist_id, title)
-                        logger.info("Updated Todoist task title from Notion", extra={"task_id": todoist_id})
-                except Exception as e:
-                    logger.debug(f"Could not sync task {todoist_id}: {e}")
+            # 2) Tasks: NO sync from Notion → Todoist (Todoist always wins)
+            # All task properties are one-way: Todoist → Notion only
+            # Future: Add bidirectional sync as enhancement
+            
         except Exception as e:
             logger.warning("Notion->Todoist reconciliation skipped due to error", extra={"error": str(e)})
 

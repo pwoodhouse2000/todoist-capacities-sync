@@ -92,7 +92,9 @@ def build_todoist_project_url(project_id: str) -> str:
 
 def extract_para_area(labels: List[str]) -> Optional[str]:
     """
-    Extract PARA area from labels.
+    Extract FIRST PARA area from labels (legacy single-area behavior).
+    
+    DEPRECATED: Use extract_para_areas() for multi-area support.
     
     Looks for labels matching PARA areas (HOME, HEALTH, PROSPER, WORK, etc.)
     Handles both plain labels and emoji-suffixed labels (e.g., "PROSPER 📁")
@@ -102,12 +104,35 @@ def extract_para_area(labels: List[str]) -> Optional[str]:
         labels: List of label names from Todoist
         
     Returns:
-        Area name if found, None otherwise
+        First area name if found, None otherwise
+    """
+    areas = extract_para_areas(labels)
+    return areas[0] if areas else None
+
+
+def extract_para_areas(labels: List[str]) -> List[str]:
+    """
+    Extract ALL PARA areas from labels.
+    
+    Supports multiple areas per task/project (rare but valid use case).
+    Example: Vacation project might have both "FUN 📁" and "PERSONAL & FAMILY 📁"
+    
+    Looks for labels matching PARA areas (HOME, HEALTH, PROSPER, WORK, etc.)
+    Handles both plain labels and emoji-suffixed labels (e.g., "PROSPER 📁")
+    Also handles multi-word areas like "PERSONAL & FAMILY 📁"
+    
+    Args:
+        labels: List of label names from Todoist
+        
+    Returns:
+        List of area names (empty list if none found)
     """
     from app.settings import settings
     
     if not settings.enable_para_areas or not labels:
-        return None
+        return []
+    
+    matched_areas = []
     
     # Check each label against defined PARA areas
     for label in labels:
@@ -121,9 +146,11 @@ def extract_para_area(labels: List[str]) -> Optional[str]:
         # Check if it matches any PARA area (case-insensitive)
         for area in settings.para_area_labels:
             if clean_label.upper() == area.upper():
-                return area
+                # Avoid duplicates (though shouldn't happen with valid labels)
+                if area not in matched_areas:
+                    matched_areas.append(area)
     
-    return None
+    return matched_areas
 
 
 def extract_person_labels(labels: List[str]) -> List[str]:

@@ -283,6 +283,43 @@ class TodoistClient:
         data = await self._post(f"/tasks/{task_id}", {"labels": updated_labels})
         return TodoistTask(**data)
 
+    async def remove_label_from_task(self, task_id: str, label: str, current_labels: List[str]) -> TodoistTask:
+        """
+        Remove a label from a task.
+
+        Args:
+            task_id: Todoist task ID
+            label: Label to remove (e.g., "capsync")
+            current_labels: Current labels on the task
+
+        Returns:
+            Updated TodoistTask object
+        """
+        # Check if label exists (with or without @)
+        label_to_remove = None
+        if label in current_labels:
+            label_to_remove = label
+        elif f"@{label}" in current_labels:
+            label_to_remove = f"@{label}"
+        
+        if not label_to_remove:
+            logger.debug(
+                "Label not found on task",
+                extra={"task_id": task_id, "label": label},
+            )
+            # Return current task
+            return await self.get_task(task_id)
+        
+        # Remove the label from existing labels
+        updated_labels = [l for l in current_labels if l != label_to_remove]
+        
+        logger.info(
+            "Removing label from Todoist task",
+            extra={"task_id": task_id, "label": label},
+        )
+        data = await self._post(f"/tasks/{task_id}", {"labels": updated_labels})
+        return TodoistTask(**data)
+
     async def update_task_title(self, task_id: str, new_title: str) -> TodoistTask:
         """
         Update a task's title (content).

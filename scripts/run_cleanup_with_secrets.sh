@@ -25,3 +25,4 @@ source .venv/bin/activate
 echo "🧹 Running cleanup script..."
 python scripts/cleanup_duplicate_areas.py "$@"
 
+
