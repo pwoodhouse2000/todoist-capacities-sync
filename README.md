@@ -2,34 +2,64 @@
 
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen)]() [![Python](https://img.shields.io/badge/python-3.9%2B-blue)]() [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-A production-grade synchronization service that automatically mirrors Todoist tasks labeled with `@capsync` into Notion database pages with full metadata, comments, and project relations.
+A production-grade synchronization service that automatically mirrors Todoist tasks labeled with `capsync` (or `@capsync`) into Notion database pages with full metadata, comments, project relations, and PARA areas organization.
 
 ## 🎯 Overview
 
-This service provides **one-way synchronization** from Todoist to Notion, enabling powerful knowledge management in Notion while maintaining Todoist as your primary task entry point.
+This service provides **intelligent one-way synchronization** from Todoist to Notion, enabling powerful knowledge management in Notion while maintaining Todoist as your primary task entry point. The sync follows the **PARA method** (Projects, Areas, Resources, Archives) for organizing tasks by life areas.
 
 ### Key Features
 
 - 🔄 **Real-time sync** via Todoist webhooks (when deployed)
-- ⏰ **Hourly reconciliation** to catch missed events
-- 🎯 **Label-based filtering** using `capsync` label
+- ⏰ **5-minute reconciliation** to catch missed events and completed tasks
+- 🎯 **Label-based filtering** using `capsync` or `@capsync` label
 - 🔗 **Automatic project relations** in Notion databases
+- 📁 **PARA Areas support** - Tasks link to life areas (WORK, HEALTH, etc.)
 - 💬 **Comment synchronization** as page content
 - 🔒 **Secure** secret management via GCP Secret Manager
 - 📊 **Observable** with structured logging
 - ⚡ **Idempotent** writes via content hashing
 - ✅ **Smart updates** - only syncs when content changes
+- 🔄 **Bidirectional backlinks** - Notion URLs added to Todoist descriptions
+- 🏗️ **Project archiving** - Syncs archived status to Notion
 - 🧪 **Fully tested** with unit, integration, and E2E tests
+- 🚫 **Inbox filtering** - Inbox projects never sync to Notion
+- ♻️ **Recurring task filtering** - Repeating tasks never sync to Notion
 
 ### What Gets Synced
 
-✅ Task title, description, and priority  
-✅ Due dates and time  
+#### Tasks
+✅ Task title, description, and priority (Todoist is source of truth)  
+✅ Due dates and time with timezone support  
 ✅ Labels (multi-select in Notion)  
-✅ Completion status  
+✅ Completion status (including completed tasks)  
 ✅ All comments (formatted as markdown)  
 ✅ Project relations (automatic)  
-✅ Task hierarchy information
+✅ PARA Area relations (multiple areas supported)  
+✅ Person relations (via `@person` labels)  
+✅ Section information  
+✅ Notion backlinks in Todoist description (task + project URLs)
+
+#### Projects
+✅ Project name and URL  
+✅ Project color and sharing status  
+✅ PARA Area relations (aggregated from tasks at creation)  
+✅ Archived/Active status  
+✅ Notion backlink in Todoist project comment
+
+#### Areas (PARA Method)
+✅ Seven predefined areas: WORK, HEALTH, PERSONAL & FAMILY, FUN, FINANCIAL, HOME, PROSPER  
+✅ Areas must be created manually in Notion first  
+✅ Areas identified by folder emoji suffix in Todoist (e.g., "WORK 📁")  
+✅ Tasks and projects can belong to multiple areas
+
+### What Doesn't Get Synced
+
+❌ Inbox project and its tasks  
+❌ Recurring/repeating tasks  
+❌ Tasks without `capsync` label  
+❌ Subtasks (coming soon)  
+❌ Project sections (metadata only, not structure)
 
 ## 📋 Quick Start
 
@@ -59,8 +89,9 @@ pip install -r requirements.txt
 
 Follow the complete guide in **[NOTION_SETUP.md](NOTION_SETUP.md)** to:
 1. Create a Notion integration
-2. Set up two Notion databases (Tasks and Projects)
+2. Set up four Notion databases: Tasks, Projects, Areas, and People
 3. Get your API key and database IDs
+4. Create the seven predefined PARA areas in the Areas database
 
 ### 3. Configure Environment
 
@@ -74,6 +105,8 @@ TODOIST_OAUTH_TOKEN=your_todoist_token_here
 NOTION_API_KEY=your_notion_integration_key_here
 NOTION_TASKS_DATABASE_ID=your_tasks_database_id_here
 NOTION_PROJECTS_DATABASE_ID=your_projects_database_id_here
+NOTION_AREAS_DATABASE_ID=your_areas_database_id_here
+NOTION_PEOPLE_DATABASE_ID=your_people_database_id_here
 
 # Optional: GCP Configuration (for production)
 GCP_PROJECT_ID=your-gcp-project
@@ -151,10 +184,13 @@ The service will be available at `http://localhost:8000`
 
 | Document | Description |
 |----------|-------------|
-| [NOTION_SETUP.md](NOTION_SETUP.md) | Complete Notion setup guide with screenshots |
-| [CODE_REVIEW.md](CODE_REVIEW.md) | Security audit and code quality review |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | GCP deployment guide |
+| **[SYNC_RULES.md](SYNC_RULES.md)** | **Complete synchronization rules and behavior** |
+| [NOTION_SETUP.md](NOTION_SETUP.md) | Complete Notion setup guide with database schemas |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | GCP deployment guide with Cloud Run and Terraform |
 | [API.md](API.md) | API endpoint documentation |
+| [CODE_AUDIT.md](CODE_AUDIT.md) | Code audit against sync rules |
+| [CODE_REVIEW.md](CODE_REVIEW.md) | Security audit and code quality review |
+| [CHANGES_2025-10-28.md](CHANGES_2025-10-28.md) | Latest changes and improvements |
 
 ## 🧪 Testing
 
@@ -254,6 +290,8 @@ See [API.md](API.md) for complete documentation.
 | `NOTION_API_KEY` | Yes | Notion integration secret |
 | `NOTION_TASKS_DATABASE_ID` | Yes | Notion tasks database ID |
 | `NOTION_PROJECTS_DATABASE_ID` | Yes | Notion projects database ID |
+| `NOTION_AREAS_DATABASE_ID` | Yes | Notion areas database ID |
+| `NOTION_PEOPLE_DATABASE_ID` | Yes | Notion people database ID |
 | `GCP_PROJECT_ID` | Production | Google Cloud project ID |
 | `INTERNAL_CRON_TOKEN` | Production | Secure token for reconcile endpoint |
 | `FIRESTORE_NAMESPACE` | Optional | Firestore collection prefix |
@@ -263,50 +301,103 @@ See [API.md](API.md) for complete documentation.
 
 #### Tasks Database Properties
 
-| Property | Type | Required |
-|----------|------|----------|
-| Name | Title | ✅ |
-| Todoist Task ID | Text | ✅ |
-| Todoist URL | URL | ✅ |
-| Priority | Select (P1-P4) | ✅ |
-| Labels | Multi-select | ✅ |
-| Due Date | Date | Optional |
-| Completed | Checkbox | ✅ |
-| Project | Relation (→ Projects) | Optional |
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| Name | Title | ✅ | Task title from Todoist |
+| Todoist Task ID | Text | ✅ | Unique identifier for idempotency |
+| Todoist URL | URL | ✅ | Deep link to Todoist task |
+| Priority | Select (P1-P4) | ✅ | Task priority (Todoist is source) |
+| Labels | Multi-select | ✅ | All Todoist labels |
+| Due Date | Date | Optional | Due date with time and timezone |
+| Completed | Checkbox | ✅ | Completion status |
+| Project | Relation (→ Projects) | Optional | Single project relation |
+| AREAS | Relation (→ Areas) | Optional | Multiple PARA area relations |
+| People | Relation (→ People) | Optional | Multiple person relations |
+| Section | Text | Optional | Todoist section name |
 
 #### Projects Database Properties
 
-| Property | Type | Required |
-|----------|------|----------|
-| Name | Title | ✅ |
-| Todoist Project ID | Text | ✅ |
-| Todoist URL | URL | ✅ |
-| Color | Select | Optional |
-| Is Shared | Checkbox | Optional |
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| Name | Title | ✅ | Project name from Todoist |
+| Todoist Project ID | Text | ✅ | Unique identifier |
+| Todoist URL | URL | ✅ | Deep link to Todoist project |
+| Color | Select | Optional | Project color |
+| Is Shared | Checkbox | Optional | Sharing status |
+| Status | Select | ✅ | Active or Archived |
+| AREAS | Relation (→ Areas) | Optional | Multiple PARA area relations |
+
+#### Areas Database Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| Name | Title | ✅ | Area name (UPPERCASE) |
+
+**Predefined Areas:** WORK, HEALTH, PERSONAL & FAMILY, FUN, FINANCIAL, HOME, PROSPER
+
+#### People Database Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| Name | Title | ✅ | Person name |
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
+**"Area not found in Notion" warning in logs**
+- Solution: Create the missing PARA area manually in Notion AREAS database
+- Remember: Areas are NEVER auto-created by the sync
+- Must use exact names: WORK, HEALTH, PERSONAL & FAMILY, FUN, FINANCIAL, HOME, PROSPER
+
+**"Inbox tasks not syncing"**
+- Expected behavior: Inbox project is explicitly filtered and never syncs to Notion
+- Move tasks to a named project and add `capsync` label to sync them
+
+**"Recurring tasks not syncing"**
+- Expected behavior: Recurring tasks are explicitly filtered and never sync to Notion
+- The `capsync` label will be automatically removed from recurring tasks
+
+**"Task synced but no areas assigned"**
+- Check that Todoist label has folder emoji suffix: `WORK 📁`
+- Verify the area exists in Notion AREAS database
+- Area names must match predefined list (case-insensitive in Todoist, but uppercase in Notion)
+
+**"Completed tasks not showing as complete in Notion"**
+- Wait for reconciliation cycle (every 5 minutes)
+- Check logs for any errors during sync
+- Verify task has `capsync` label (Todoist renders as `@capsync`)
+
 **"Labels is not a property that exists"**
 - Solution: Add "Labels" as Multi-select property in Tasks database
+- Also ensure AREAS (relation), People (relation), Section (text) exist
 
 **"No tasks with @capsync label found"**
-- Verify label is spelled correctly (case-sensitive)
+- Verify label is spelled correctly: `capsync` or `@capsync` (case-sensitive)
 - Check that label is saved in Todoist
-- Try: `curl "http://localhost:8000/test/todoist?capsync_only=true"`
+- Test: `curl "http://localhost:8000/test/todoist?capsync_only=true"`
 
 **"Notion API error: Invalid database ID"**
-- Verify database IDs are correct (32 hex characters)
-- Ensure databases are shared with your integration
+- Verify database IDs are correct (32 hex characters without dashes)
+- Ensure all four databases are shared with your Notion integration
 - Check `.env` file has no extra quotes or spaces
+
+**"AttributeError: 'DatabasesEndpoint' object has no attribute 'query'"**
+- This was a known bug, now fixed with direct HTTP API calls
+- Update to latest version from GitHub
 
 **"Service not starting"**
 - Check Python version: `python3 --version` (need 3.9+)
 - Verify all dependencies installed: `pip install -r requirements.txt`
 - Check logs: `tail -f /tmp/uvicorn.log`
+- Verify all four database IDs are set in environment
 
-See [NOTION_SETUP.md](NOTION_SETUP.md) for more troubleshooting tips.
+**"Duplicate AREA entries in Notion"**
+- This was a known bug, now fixed
+- Run cleanup script: `python scripts/cleanup_duplicate_areas.py`
+- New areas are never auto-created
+
+See [NOTION_SETUP.md](NOTION_SETUP.md) for more troubleshooting tips and [SYNC_RULES.md](SYNC_RULES.md) for complete behavior documentation.
 
 ## 🔒 Security
 
@@ -376,12 +467,62 @@ pytest
 
 ## 📝 Sync Behavior
 
+### Complete Synchronization Rules
+
+For comprehensive details on how every entity syncs, see **[SYNC_RULES.md](SYNC_RULES.md)**.
+
 ### Task Lifecycle
 
-1. **Create**: Task gets `capsync` label → Synced to Notion
-2. **Update**: Task changes in Todoist → Updated in Notion
-3. **Complete**: Task marked done → Checkbox updated in Notion
-4. **Archive**: Label removed or task deleted → Page archived in Notion
+1. **Labeling**: Add `capsync` or `@capsync` label to a Todoist task
+   - Task must NOT be in Inbox project
+   - Task must NOT be recurring
+   - Subtasks automatically inherit label from parent
+2. **Creation**: Task synced to Notion with:
+   - All metadata (title, description, priority, due date, labels)
+   - Project relation (project auto-created if needed)
+   - AREA relations (multiple areas supported)
+   - Person relations (via `@person` labels)
+   - Two Notion URLs added to Todoist description (task + project pages)
+3. **Updates**: Changes in Todoist → Updated in Notion
+   - **Todoist wins** on all task properties
+   - Title, description, priority, due date, completion status
+   - Labels, project assignment, areas
+4. **Completion**: Task marked done → Checkbox updated in Notion
+   - Reconciliation fetches both active AND completed tasks
+5. **Un-labeling**: Remove `capsync` label → Page archived in Notion
+6. **Recurring**: Task becomes recurring → Label auto-removed, page archived
+
+### Project Lifecycle
+
+1. **Creation**: Project created one-way from Todoist → Notion
+   - Only projects with at least one eligible task sync
+   - Inbox project NEVER syncs
+   - AREAS aggregated from all tasks in project (set once)
+   - Notion project URL added to Todoist as comment
+2. **Updates**: Post-creation, **Notion wins** on:
+   - Project name (can be edited in Notion)
+   - AREAS (managed in Notion after creation)
+   - Other properties still sync from Todoist (color, sharing)
+3. **Archiving**: Archived in Todoist → Status set to "Archived" in Notion
+   - All tasks in project also archived in Notion
+4. **Unarchiving**: Unarchived in Todoist → Status set to "Active" in Notion
+5. **Empty Projects**: If last eligible task removed → Status set to "Archived"
+6. **Deletion**: Deleted in Todoist → Deleted in Notion (rare)
+
+### Areas Lifecycle
+
+1. **Creation**: Areas MUST be created manually in Notion first
+   - Seven predefined areas only
+   - Sync NEVER creates new areas
+2. **Assignment**: Areas assigned via Todoist labels with folder emoji
+   - Example: `WORK 📁`, `HEALTH 📁`
+   - Multiple areas per task/project supported
+   - Folder emoji (📁) MUST be present
+3. **Updates**: Areas on tasks sync continuously from Todoist
+   - Areas on projects set once at creation, then managed in Notion
+4. **Deletion**: If area deleted in Notion (rare):
+   - Tasks show no area relation
+   - No error, graceful degradation
 
 ### Idempotency
 
@@ -389,14 +530,16 @@ The service uses content hashing to avoid unnecessary updates:
 - Computes SHA-256 hash of task content
 - Compares with last synced hash in Firestore
 - Only updates Notion if content changed
+- Reduces API calls and improves performance
 
 ### Reconciliation
 
-Hourly reconciliation ensures consistency:
-- Fetches all tasks with `capsync` label
+Every 5 minutes, reconciliation ensures consistency:
+- Fetches all **active AND completed** tasks with `capsync` label
 - Syncs any new or changed tasks
 - Archives tasks without label
-- Reports sync statistics
+- Auto-removes `capsync` from ineligible tasks (recurring, Inbox)
+- Reports sync statistics to logs
 
 ## 🎓 Learning Resources
 

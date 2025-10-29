@@ -26,3 +26,4 @@ echo "🧹 Running cleanup script..."
 python scripts/cleanup_duplicate_areas.py "$@"
 
 
+

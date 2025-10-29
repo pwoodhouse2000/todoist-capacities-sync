@@ -227,3 +227,75 @@ class TestNotionClientErrorHandling:
                 content = comment_block["paragraph"]["rich_text"][0]["text"]["content"]
                 assert len(content) <= 2000
 
+
+@pytest.mark.asyncio
+class TestNotionClientAreasOperations:
+    """Test Notion client areas operations."""
+
+    async def test_find_area_by_name_found(self, notion_client):
+        """Test finding an existing area."""
+        mock_response = {
+            "results": [
+                {"id": "area123", "properties": {"Name": {"title": [{"text": {"content": "WORK"}}]}}}
+            ]
+        }
+        
+        with patch.object(notion_client, "_query_database_direct", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = mock_response
+            
+            result = await notion_client.find_area_by_name("WORK")
+            
+            assert result is not None
+            assert result["id"] == "area123"
+
+    async def test_find_area_by_name_not_found(self, notion_client):
+        """Test finding a non-existent area."""
+        mock_response = {"results": []}
+        
+        with patch.object(notion_client, "_query_database_direct", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = mock_response
+            
+            result = await notion_client.find_area_by_name("NONEXISTENT")
+            
+            assert result is None
+
+    async def test_ensure_area_exists_never_creates(self, notion_client):
+        """Test that ensure_area_exists NEVER creates new areas (only finds existing)."""
+        # Simulate area not found
+        mock_response = {"results": []}
+        
+        with patch.object(notion_client, "_query_database_direct", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = mock_response
+            
+            # Should return None and NOT create
+            result = await notion_client.ensure_area_exists("NEW_AREA")
+            
+            assert result is None
+            # Verify NO create call was made
+            assert not hasattr(notion_client.client.pages, "create") or \
+                   notion_client.client.pages.create.await_count == 0
+
+    async def test_create_todo_with_multiple_areas(self, notion_client, sample_notion_todo):
+        """Test creating a todo with multiple area relations."""
+        mock_response = {"id": "page456"}
+        area_ids = ["area1", "area2", "area3"]
+        
+        with patch.object(notion_client.client.pages, "create", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = mock_response
+            
+            result = await notion_client.create_todo_page(
+                sample_notion_todo, 
+                project_page_id=None,
+                area_page_ids=area_ids
+            )
+            
+            # Verify all three area relations were added
+            call_args = mock_create.call_args
+            properties = call_args.kwargs["properties"]
+            assert "AREAS" in properties
+            relations = properties["AREAS"]["relation"]
+            assert len(relations) == 3
+            assert relations[0]["id"] == "area1"
+            assert relations[1]["id"] == "area2"
+            assert relations[2]["id"] == "area3"
+

@@ -13,6 +13,7 @@ from app.utils import (
     build_todoist_task_url,
     build_todoist_project_url,
     extract_para_area,
+    extract_para_areas,
     extract_person_labels,
 )
 
@@ -189,7 +190,7 @@ class TestURLBuilders:
 
 
 class TestExtractParaArea:
-    """Test extract_para_area function."""
+    """Test extract_para_area function (legacy, returns first match)."""
 
     def test_single_word_area_with_emoji(self):
         """Test extracting single-word PARA area like 'WORK 📁'."""
@@ -204,8 +205,8 @@ class TestExtractParaArea:
         assert area == "PERSONAL & FAMILY"
 
     def test_area_without_emoji(self):
-        """Test extracting area label without emoji."""
-        labels = ["HEALTH", "urgent"]
+        """Test extracting area label without emoji - only folder emoji counts."""
+        labels = ["HEALTH 📁", "urgent"]
         area = extract_para_area(labels)
         assert area == "HEALTH"
 
@@ -245,4 +246,65 @@ class TestExtractParaArea:
         labels = ["FUN 📁"]
         area = extract_para_area(labels)
         assert area == "FUN"
+
+
+class TestExtractParaAreas:
+    """Test extract_para_areas function (returns all matching areas)."""
+
+    def test_single_area(self):
+        """Test extracting a single PARA area."""
+        labels = ["WORK 📁", "capsync"]
+        areas = extract_para_areas(labels)
+        assert areas == ["WORK"]
+
+    def test_multiple_areas(self):
+        """Test extracting multiple PARA areas."""
+        labels = ["WORK 📁", "PERSONAL & FAMILY 📁", "capsync"]
+        areas = extract_para_areas(labels)
+        assert "WORK" in areas
+        assert "PERSONAL & FAMILY" in areas
+        assert len(areas) == 2
+
+    def test_no_areas(self):
+        """Test when no PARA areas are present."""
+        labels = ["urgent", "important"]
+        areas = extract_para_areas(labels)
+        assert areas == []
+
+    def test_area_with_emoji_required(self):
+        """Test that only labels with folder emoji are considered areas."""
+        labels = ["WORK 📁", "HEALTH", "capsync"]
+        areas = extract_para_areas(labels)
+        # Only WORK with emoji should be extracted
+        assert "WORK" in areas
+        # HEALTH without emoji should not be extracted
+        assert "HEALTH" not in areas
+
+    def test_case_insensitive_matching(self):
+        """Test that area matching is case-insensitive."""
+        labels = ["work 📁", "FUN 📁"]
+        areas = extract_para_areas(labels)
+        assert "WORK" in areas
+        assert "FUN" in areas
+
+    def test_all_seven_para_areas(self):
+        """Test all seven predefined PARA areas."""
+        labels = [
+            "WORK 📁",
+            "HEALTH 📁",
+            "PERSONAL & FAMILY 📁",
+            "FUN 📁",
+            "FINANCIAL 📁",
+            "HOME 📁",
+            "PROSPER 📁",
+        ]
+        areas = extract_para_areas(labels)
+        assert len(areas) == 7
+        assert "WORK" in areas
+        assert "HEALTH" in areas
+        assert "PERSONAL & FAMILY" in areas
+        assert "FUN" in areas
+        assert "FINANCIAL" in areas
+        assert "HOME" in areas
+        assert "PROSPER" in areas
 
