@@ -377,7 +377,12 @@ class NotionClient:
         if project_page_id:
             properties["Project"] = {"relation": [{"id": project_page_id}]}
 
-        result = await self.client.pages.update(page_id=page_id, properties=properties)
+        # Automatically unarchive page if it was archived (prevents "can't edit archived block" errors)
+        result = await self.client.pages.update(
+            page_id=page_id, 
+            properties=properties,
+            archived=False
+        )
 
         # Note: We don't update body content on updates to preserve manual edits in Notion
         # Description is only synced on initial task creation
