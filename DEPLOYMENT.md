@@ -47,7 +47,12 @@ Internet
 | **Cloud Scheduler** | Triggers reconciliation | ~$0.10/month |
 | **Cloud Logging** | Application logs | ~$1/month |
 
-**Total**: ~$5-10/month for typical usage (100-500 tasks synced daily)
+**Total**: ~$13-20/month for typical usage (100-500 tasks synced daily)
+
+**Cost Optimizations Applied:**
+- Reconciliation schedule: Every 2 hours, 5am-9pm Pacific (9x/day vs 24x/day)
+- Savings: ~60% reduction in Cloud Run costs vs hourly scheduling
+- No overnight syncs when not actively working
 
 ## 🔧 Step-by-Step Deployment
 
@@ -173,10 +178,10 @@ echo "✅ Service deployed at: $SERVICE_URL"
 ### Step 6: Set Up Cloud Scheduler
 
 ```bash
-# 1. Create scheduler job for reconciliation
+# 1. Create scheduler job for reconciliation (every 2 hours, 5am-9pm Pacific)
 gcloud scheduler jobs create http todoist-reconcile \
     --location=us-central1 \
-    --schedule="0 * * * *" \
+    --schedule="0 5-22/2 * * *" \
     --uri="$SERVICE_URL/reconcile" \
     --http-method=POST \
     --headers="Authorization=Bearer $CRON_TOKEN" \

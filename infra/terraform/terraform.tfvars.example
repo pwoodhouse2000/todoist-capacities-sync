@@ -12,5 +12,5 @@ capacities_space_id = "your-capacities-space-id"
 # Optional: Override defaults
 # firestore_namespace = "todoist-capacities-v1"
 # default_timezone = "America/Los_Angeles"
-# reconcile_schedule = "0 * * * *"  # Hourly
+# reconcile_schedule = "0 5-22/2 * * *"  # Every 2 hours, 5am-9pm Pacific (cost optimized)
 

@@ -275,10 +275,11 @@ Entities sync in this order to maintain referential integrity:
 4. **Subtasks** - Need parent tasks to exist
 
 ### Reconciliation Schedule
-- Runs **every 5 minutes** via Cloud Scheduler
+- Runs **every 2 hours (5am-9pm Pacific)** via Cloud Scheduler (cost-optimized)
 - Fetches all Todoist tasks with `capsync` label (active + completed)
 - Compares with Notion state
 - Applies updates as needed
+- 9 syncs per day during active hours, none overnight (saves ~60% on costs)
 
 ### Webhook Events
 - Todoist webhooks provide real-time updates
@@ -376,5 +377,11 @@ Legend:
 ---
 
 **Questions or Issues?** See `PROJECT_STATUS.md` or `GETTING_STARTED.md`
+
+
+
+
+
+
 
 

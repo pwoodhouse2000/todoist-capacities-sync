@@ -14,7 +14,7 @@ Your **Todoist → Capacities Sync** service is fully built and ready for deploy
 - **Firestore storage** - Idempotent sync state management
 - **Pub/Sub processing** - Async event-driven architecture
 - **Webhook handler** - Real-time Todoist event processing
-- **Reconciliation** - Hourly catch-up for missed events
+- **Reconciliation** - Every 2 hours (5am-9pm Pacific) catch-up for missed events
 
 ### Infrastructure (Terraform + GCP)
 - **Cloud Run** - Auto-scaling FastAPI service
@@ -149,13 +149,14 @@ TodoistCapacitiesSynvV1/
 8. Updates sync state in Firestore
 ```
 
-### Hourly Reconciliation
+### Smart Reconciliation (Every 2 Hours, 5am-9pm)
 ```
-1. Cloud Scheduler triggers /reconcile
+1. Cloud Scheduler triggers /reconcile (9x daily during active hours)
 2. Fetch all Todoist tasks with @capsync
 3. Compare with Firestore sync state
 4. Upsert missing/changed tasks
 5. Archive removed tasks
+Cost-optimized: ~60% savings vs hourly, no overnight syncs
 ```
 
 ## 🧪 Testing Strategy

@@ -50,8 +50,8 @@ variable "capacities_space_id" {
 }
 
 variable "reconcile_schedule" {
-  description = "Cron schedule for reconciliation (default: hourly)"
+  description = "Cron schedule for reconciliation (default: every 2 hours, 5am-9pm Pacific)"
   type        = string
-  default     = "0 * * * *"
+  default     = "0 5-22/2 * * *"
 }
 

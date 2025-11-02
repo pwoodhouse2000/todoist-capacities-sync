@@ -11,7 +11,7 @@ This service provides **intelligent one-way synchronization** from Todoist to No
 ### Key Features
 
 - 🔄 **Real-time sync** via Todoist webhooks (when deployed)
-- ⏰ **5-minute reconciliation** to catch missed events and completed tasks
+- ⏰ **Smart reconciliation** every 2 hours (5am-9pm Pacific) to catch missed events and completed tasks
 - 🎯 **Label-based filtering** using `capsync` or `@capsync` label
 - 🔗 **Automatic project relations** in Notion databases
 - 📁 **PARA Areas support** - Tasks link to life areas (WORK, HEALTH, etc.)
@@ -178,7 +178,7 @@ The service will be available at `http://localhost:8000`
 - **Pub/Sub**: Decouples webhook receipt from processing
 - **Sync Worker**: Core sync logic with Todoist/Notion interaction
 - **Firestore**: Stores sync state and content hashes for idempotency
-- **Cloud Scheduler**: Triggers hourly reconciliation
+- **Cloud Scheduler**: Triggers reconciliation every 2 hours (5am-9pm Pacific, cost-optimized)
 
 ## 📚 Documentation
 
@@ -534,12 +534,13 @@ The service uses content hashing to avoid unnecessary updates:
 
 ### Reconciliation
 
-Every 5 minutes, reconciliation ensures consistency:
+Every 2 hours (5am-9pm Pacific), reconciliation ensures consistency:
 - Fetches all **active AND completed** tasks with `capsync` label
 - Syncs any new or changed tasks
 - Archives tasks without label
 - Auto-removes `capsync` from ineligible tasks (recurring, Inbox)
 - Reports sync statistics to logs
+- Cost-optimized schedule: 9 syncs per day during active hours, none overnight
 
 ## 🎓 Learning Resources
 
