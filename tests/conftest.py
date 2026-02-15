@@ -75,7 +75,7 @@ def sample_notion_todo() -> NotionToDo:
         title="Test task",
         body="Task description",
         todoist_task_id="12345678",
-        todoist_url="https://todoist.com/showTask?id=12345678",
+        todoist_url="https://app.todoist.com/app/task/12345678",
         todoist_project_id="98765",
         todoist_project_name="Test Project",
         todoist_labels=["capsync", "work"],
@@ -96,7 +96,7 @@ def sample_notion_project() -> NotionProject:
     return NotionProject(
         todoist_project_id="98765",
         name="Test Project",
-        url="https://todoist.com/app/project/98765",
+        url="https://app.todoist.com/app/project/98765",
         is_shared=False,
         color="blue",
         last_synced_at="2025-10-09T18:00:00Z",

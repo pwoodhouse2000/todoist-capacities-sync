@@ -81,13 +81,13 @@ def safe_get(data: Dict[str, Any], key: str, default: Any = None) -> Any:
 
 
 def build_todoist_task_url(task_id: str) -> str:
-    """Build a Todoist task URL."""
-    return f"https://todoist.com/showTask?id={task_id}"
+    """Build a Todoist task URL (v1 alphanumeric IDs)."""
+    return f"https://app.todoist.com/app/task/{task_id}"
 
 
 def build_todoist_project_url(project_id: str) -> str:
-    """Build a Todoist project URL."""
-    return f"https://todoist.com/app/project/{project_id}"
+    """Build a Todoist project URL (v1 alphanumeric IDs)."""
+    return f"https://app.todoist.com/app/project/{project_id}"
 
 
 def extract_para_area(labels: List[str]) -> Optional[str]:

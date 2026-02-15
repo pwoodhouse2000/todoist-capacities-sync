@@ -244,7 +244,7 @@ class TestMapperIntegration:
 
         assert project.todoist_project_id == sample_todoist_project.id
         assert project.name == sample_todoist_project.name
-        assert project.url == f"https://todoist.com/app/project/{sample_todoist_project.id}"
+        assert project.url == f"https://app.todoist.com/app/project/{sample_todoist_project.id}"
         assert project.color == sample_todoist_project.color
 
 

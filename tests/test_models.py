@@ -70,7 +70,7 @@ class TestNotionModels:
         todo = NotionToDo(
             title="Test",
             todoist_task_id="123",
-            todoist_url="https://todoist.com/showTask?id=123",
+            todoist_url="https://app.todoist.com/app/task/123",
             todoist_project_id="456",
             todoist_project_name="Project",
             created_at="2025-10-09T12:00:00Z",
@@ -86,7 +86,7 @@ class TestNotionModels:
         project = NotionProject(
             todoist_project_id="123",
             name="Test Project",
-            url="https://todoist.com/app/project/123",
+            url="https://app.todoist.com/app/project/123",
             color="red",
         )
         assert project.todoist_project_id == "123"

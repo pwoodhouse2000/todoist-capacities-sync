@@ -33,6 +33,9 @@ class TodoistClient:
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
         }
+        # In-memory caches for reducing API calls during reconciliation
+        self._project_cache: Dict[str, "TodoistProject"] = {}
+        self._section_cache: Dict[str, "TodoistSection"] = {}
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -176,7 +179,7 @@ class TodoistClient:
 
     async def get_project(self, project_id: str) -> TodoistProject:
         """
-        Fetch a single project by ID.
+        Fetch a single project by ID. Uses in-memory cache to avoid repeated API calls.
 
         Args:
             project_id: Todoist project ID
@@ -184,13 +187,18 @@ class TodoistClient:
         Returns:
             TodoistProject object
         """
+        if project_id in self._project_cache:
+            return self._project_cache[project_id]
+
         logger.info("Fetching Todoist project", extra={"project_id": project_id})
         data = await self._get(f"/projects/{project_id}")
-        return TodoistProject(**data)
+        project = TodoistProject(**data)
+        self._project_cache[project_id] = project
+        return project
 
     async def get_projects(self) -> List[TodoistProject]:
         """
-        Fetch all projects.
+        Fetch all projects. Also warms the project cache.
 
         Returns:
             List of TodoistProject objects
@@ -199,12 +207,25 @@ class TodoistClient:
         # v1 projects endpoint returns a plain array
         data = await self._get("/projects")
         if isinstance(data, dict) and "results" in data:
-            return [TodoistProject(**project) for project in data["results"]]
-        return [TodoistProject(**project) for project in data]
+            projects = [TodoistProject(**project) for project in data["results"]]
+        else:
+            projects = [TodoistProject(**project) for project in data]
+
+        # Warm the cache so get_project() doesn't need individual API calls
+        for p in projects:
+            self._project_cache[p.id] = p
+        logger.info("Warmed project cache", extra={"count": len(projects)})
+
+        return projects
+
+    def clear_caches(self) -> None:
+        """Clear in-memory caches. Call between reconciliation runs."""
+        self._project_cache.clear()
+        self._section_cache.clear()
 
     async def get_section(self, section_id: str) -> TodoistSection:
         """
-        Fetch a single section by ID.
+        Fetch a single section by ID. Uses in-memory cache to avoid repeated API calls.
 
         Args:
             section_id: Todoist section ID
@@ -212,9 +233,14 @@ class TodoistClient:
         Returns:
             TodoistSection object
         """
+        if section_id in self._section_cache:
+            return self._section_cache[section_id]
+
         logger.info("Fetching Todoist section", extra={"section_id": section_id})
         data = await self._get(f"/sections/{section_id}")
-        return TodoistSection(**data)
+        section = TodoistSection(**data)
+        self._section_cache[section_id] = section
+        return section
 
     async def get_sections(self, project_id: Optional[str] = None) -> List[TodoistSection]:
         """

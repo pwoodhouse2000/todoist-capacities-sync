@@ -145,6 +145,6 @@ def test_map_project_to_capacities() -> None:
     assert capacities_project.name == "My Project"
     assert capacities_project.color == "orange"
     assert capacities_project.is_shared is True
-    assert capacities_project.url == "https://todoist.com/app/project/proj-1"
+    assert capacities_project.url == "https://app.todoist.com/app/project/proj-1"
     assert capacities_project.last_synced_at is not None
 

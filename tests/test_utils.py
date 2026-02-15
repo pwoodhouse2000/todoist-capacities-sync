@@ -171,15 +171,15 @@ class TestURLBuilders:
     """Test URL building functions."""
 
     def test_build_todoist_task_url(self):
-        task_id = "12345678"
+        task_id = "6fWhf2rxhj5fWXfQ"
         url = build_todoist_task_url(task_id)
-        assert url == "https://todoist.com/showTask?id=12345678"
+        assert url == "https://app.todoist.com/app/task/6fWhf2rxhj5fWXfQ"
         assert task_id in url
 
     def test_build_todoist_project_url(self):
-        project_id = "98765"
+        project_id = "6fWhcxpxPcp5v6rx"
         url = build_todoist_project_url(project_id)
-        assert url == "https://todoist.com/app/project/98765"
+        assert url == "https://app.todoist.com/app/project/6fWhcxpxPcp5v6rx"
         assert project_id in url
 
     def test_url_builder_with_special_chars(self):

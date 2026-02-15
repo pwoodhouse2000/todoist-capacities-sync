@@ -264,7 +264,10 @@ class ReconcileHandler:
         """
         logger.info("Starting reconciliation")
 
-        # Step 1: Auto-label eligible tasks
+        # Clear caches from any previous run
+        self.todoist.clear_caches()
+
+        # Step 1: Auto-label eligible tasks (also warms project cache via get_projects)
         auto_labeled_count = await self._auto_label_tasks()
 
         # Step 2: Reconcile projects (archival status + name sync)
@@ -283,7 +286,7 @@ class ReconcileHandler:
         # Step 3c: Fetch all Todoist tasks with capsync label (both active AND completed)
         # We need to include completed tasks so they can be marked as completed in Notion
         active_tasks = await self.todoist.get_active_tasks_with_label()
-        
+
         # Also fetch completed tasks with capsync label (they need to sync to Notion too)
         try:
             completed_tasks_response = await self.todoist._get_paginated(
@@ -297,27 +300,35 @@ class ReconcileHandler:
                 extra={"error": str(e)},
             )
             completed_tasks = []
-        
+
         # Combine active and completed tasks
         all_fetched_tasks = active_tasks + completed_tasks
         active_task_ids = {task.id for task in all_fetched_tasks}
 
         logger.info(
-            "Found active tasks with capsync label",
-            extra={"count": len(active_tasks), "auto_labeled": auto_labeled_count},
+            "Found tasks with capsync label",
+            extra={
+                "active": len(active_tasks),
+                "completed": len(completed_tasks),
+                "total": len(all_fetched_tasks),
+                "auto_labeled": auto_labeled_count,
+            },
         )
 
         # Fetch all stored sync states
         stored_states = await self.store.get_all_task_states()
         stored_task_ids = {state.todoist_task_id for state in stored_states}
 
-        # Process active and completed tasks (upsert)
+        # OPTIMIZATION: Pass task snapshots to avoid re-fetching each task individually.
+        # Each task already has full data from the bulk fetch above.
+        # This saves ~262 GET /tasks/{id} calls (1 per task).
         upserted = 0
         for task in all_fetched_tasks:
             try:
                 message = PubSubMessage(
                     action=SyncAction.UPSERT,
                     todoist_task_id=task.id,
+                    snapshot=task.model_dump(),
                 )
                 await self.worker.process_message(message, sync_source="reconciliation")
                 upserted += 1
