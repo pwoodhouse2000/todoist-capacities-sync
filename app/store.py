@@ -222,6 +222,76 @@ class FirestoreStore:
         logger.info(f"Cleared {count} task states")
         return count
     
+    async def get_last_reconcile_time(self) -> Optional[str]:
+        """
+        Get the last reconciliation timestamp.
+
+        Returns:
+            ISO 8601 timestamp string, or None if never reconciled
+        """
+        client = await self._get_client()
+        doc_ref = client.collection(self.namespace).document("_meta")
+        doc = await doc_ref.get()
+
+        if doc.exists:
+            data = doc.to_dict()
+            return data.get("last_reconcile_time")
+
+        return None
+
+    async def set_last_reconcile_time(self, timestamp: str) -> None:
+        """
+        Set the last reconciliation timestamp.
+
+        Args:
+            timestamp: ISO 8601 timestamp string
+        """
+        client = await self._get_client()
+        doc_ref = client.collection(self.namespace).document("_meta")
+        await doc_ref.set({"last_reconcile_time": timestamp}, merge=True)
+
+    async def get_task_state_by_notion_id(self, notion_page_id: str) -> Optional[TaskSyncState]:
+        """
+        Find a task state by Notion page ID.
+
+        Args:
+            notion_page_id: Notion page ID
+
+        Returns:
+            TaskSyncState if found, None otherwise
+        """
+        client = await self._get_client()
+        collection_ref = client.collection(self._task_collection_ref())
+
+        query = collection_ref.where("capacities_object_id", "==", notion_page_id).limit(1)
+        docs = query.stream()
+
+        async for doc in docs:
+            data = doc.to_dict()
+            return TaskSyncState(**data)
+
+        return None
+
+    async def get_all_project_states(self) -> List[ProjectSyncState]:
+        """
+        Retrieve all project sync states.
+
+        Returns:
+            List of ProjectSyncState objects
+        """
+        logger.info("Getting all project states")
+
+        client = await self._get_client()
+        collection_ref = client.collection(self._project_collection_ref())
+        docs = collection_ref.stream()
+
+        states = []
+        async for doc in docs:
+            data = doc.to_dict()
+            states.append(ProjectSyncState(**data))
+
+        return states
+
     async def close(self) -> None:
         """Close Firestore client connection."""
         if self.client:

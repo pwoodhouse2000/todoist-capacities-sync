@@ -81,13 +81,13 @@ def safe_get(data: Dict[str, Any], key: str, default: Any = None) -> Any:
 
 
 def build_todoist_task_url(task_id: str) -> str:
-    """Build a Todoist task URL."""
-    return f"https://todoist.com/showTask?id={task_id}"
+    """Build a Todoist task URL (v1 alphanumeric IDs)."""
+    return f"https://app.todoist.com/app/task/{task_id}"
 
 
 def build_todoist_project_url(project_id: str) -> str:
-    """Build a Todoist project URL."""
-    return f"https://todoist.com/app/project/{project_id}"
+    """Build a Todoist project URL (v1 alphanumeric IDs)."""
+    return f"https://app.todoist.com/app/project/{project_id}"
 
 
 def extract_para_area(labels: List[str]) -> Optional[str]:
@@ -179,6 +179,29 @@ def extract_person_labels(labels: List[str]) -> List[str]:
             person_labels.append(person_name)
     
     return person_labels
+
+
+def get_area_label_from_parent_project(project_name: str) -> Optional[str]:
+    """
+    Try to match a project name to a PARA area label.
+
+    Args:
+        project_name: Todoist project name
+
+    Returns:
+        Matching area label name if found, None otherwise
+    """
+    from app.settings import settings
+
+    if not settings.enable_para_areas or not project_name:
+        return None
+
+    clean_name = project_name.strip().upper()
+    for area in settings.para_area_labels:
+        if area.upper() in clean_name or clean_name in area.upper():
+            return area
+
+    return None
 
 
 def strip_notion_backlink(description: str) -> str:

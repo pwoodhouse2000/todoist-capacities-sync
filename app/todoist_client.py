@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 
 class TodoistClient:
-    """Async HTTP client for Todoist REST API v2."""
+    """Async HTTP client for Todoist API v1."""
 
     def __init__(
         self,
@@ -33,6 +33,9 @@ class TodoistClient:
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
         }
+        # In-memory caches for reducing API calls during reconciliation
+        self._project_cache: Dict[str, "TodoistProject"] = {}
+        self._section_cache: Dict[str, "TodoistSection"] = {}
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -63,7 +66,7 @@ class TodoistClient:
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
     )
-    async def _post(self, endpoint: str, data: Dict[str, Any]) -> Dict:
+    async def _post(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Union[Dict, None]:
         """
         Make POST request to Todoist API with retry logic.
 
@@ -72,7 +75,7 @@ class TodoistClient:
             data: JSON data to send
 
         Returns:
-            JSON response data
+            JSON response data, or None for 204 responses
 
         Raises:
             httpx.HTTPError: On request failure
@@ -80,9 +83,67 @@ class TodoistClient:
         url = f"{self.base_url}{endpoint}"
         async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
             logger.info("Todoist POST request", extra={"endpoint": endpoint})
-            response = await client.post(url, headers=self.headers, json=data)
+            response = await client.post(url, headers=self.headers, json=data or {})
             response.raise_for_status()
+            if response.status_code == 204:
+                return None
             return response.json()
+
+    @retry(
+        stop=stop_after_attempt(settings.max_retries),
+        wait=wait_exponential(multiplier=settings.retry_delay, min=1, max=10),
+    )
+    async def _delete(self, endpoint: str) -> None:
+        """
+        Make DELETE request to Todoist API with retry logic.
+
+        Args:
+            endpoint: API endpoint (e.g., "/tasks/123")
+        """
+        url = f"{self.base_url}{endpoint}"
+        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
+            logger.info("Todoist DELETE request", extra={"endpoint": endpoint})
+            response = await client.delete(url, headers=self.headers)
+            response.raise_for_status()
+
+    async def _get_paginated(self, endpoint: str, params: Optional[Dict] = None) -> List[Dict]:
+        """
+        Fetch all results from a paginated v1 API endpoint.
+
+        v1 API returns: {"results": [...], "next_cursor": "..." | null}
+        This method auto-paginates through all results.
+
+        Args:
+            endpoint: API endpoint
+            params: Query parameters
+
+        Returns:
+            Combined list of all results across pages
+        """
+        all_results = []
+        cursor = None
+        params = dict(params or {})
+
+        while True:
+            if cursor:
+                params["cursor"] = cursor
+
+            data = await self._get(endpoint, params=params)
+
+            # Handle v1 paginated response format
+            if isinstance(data, dict) and "results" in data:
+                all_results.extend(data["results"])
+                cursor = data.get("next_cursor")
+                if not cursor:
+                    break
+            elif isinstance(data, list):
+                # Fallback for endpoints that return plain arrays (e.g., projects)
+                all_results.extend(data)
+                break
+            else:
+                break
+
+        return all_results
 
     async def get_task(self, task_id: str) -> TodoistTask:
         """
@@ -113,12 +174,12 @@ class TodoistClient:
             params["label"] = label
 
         logger.info("Fetching Todoist tasks", extra={"label": label})
-        data = await self._get("/tasks", params=params)
-        return [TodoistTask(**task) for task in data]
+        results = await self._get_paginated("/tasks", params=params)
+        return [TodoistTask(**task) for task in results]
 
     async def get_project(self, project_id: str) -> TodoistProject:
         """
-        Fetch a single project by ID.
+        Fetch a single project by ID. Uses in-memory cache to avoid repeated API calls.
 
         Args:
             project_id: Todoist project ID
@@ -126,24 +187,45 @@ class TodoistClient:
         Returns:
             TodoistProject object
         """
+        if project_id in self._project_cache:
+            return self._project_cache[project_id]
+
         logger.info("Fetching Todoist project", extra={"project_id": project_id})
         data = await self._get(f"/projects/{project_id}")
-        return TodoistProject(**data)
+        project = TodoistProject(**data)
+        self._project_cache[project_id] = project
+        return project
 
     async def get_projects(self) -> List[TodoistProject]:
         """
-        Fetch all projects.
+        Fetch all projects. Also warms the project cache.
 
         Returns:
             List of TodoistProject objects
         """
         logger.info("Fetching all Todoist projects")
+        # v1 projects endpoint returns a plain array
         data = await self._get("/projects")
-        return [TodoistProject(**project) for project in data]
+        if isinstance(data, dict) and "results" in data:
+            projects = [TodoistProject(**project) for project in data["results"]]
+        else:
+            projects = [TodoistProject(**project) for project in data]
+
+        # Warm the cache so get_project() doesn't need individual API calls
+        for p in projects:
+            self._project_cache[p.id] = p
+        logger.info("Warmed project cache", extra={"count": len(projects)})
+
+        return projects
+
+    def clear_caches(self) -> None:
+        """Clear in-memory caches. Call between reconciliation runs."""
+        self._project_cache.clear()
+        self._section_cache.clear()
 
     async def get_section(self, section_id: str) -> TodoistSection:
         """
-        Fetch a single section by ID.
+        Fetch a single section by ID. Uses in-memory cache to avoid repeated API calls.
 
         Args:
             section_id: Todoist section ID
@@ -151,9 +233,14 @@ class TodoistClient:
         Returns:
             TodoistSection object
         """
+        if section_id in self._section_cache:
+            return self._section_cache[section_id]
+
         logger.info("Fetching Todoist section", extra={"section_id": section_id})
         data = await self._get(f"/sections/{section_id}")
-        return TodoistSection(**data)
+        section = TodoistSection(**data)
+        self._section_cache[section_id] = section
+        return section
 
     async def get_sections(self, project_id: Optional[str] = None) -> List[TodoistSection]:
         """
@@ -170,8 +257,8 @@ class TodoistClient:
             params["project_id"] = project_id
 
         logger.info("Fetching Todoist sections", extra={"project_id": project_id})
-        data = await self._get("/sections", params=params)
-        return [TodoistSection(**section) for section in data]
+        results = await self._get_paginated("/sections", params=params)
+        return [TodoistSection(**section) for section in results]
 
     async def get_comments(self, task_id: str) -> List[TodoistComment]:
         """
@@ -184,13 +271,13 @@ class TodoistClient:
             List of TodoistComment objects
         """
         logger.info("Fetching Todoist comments", extra={"task_id": task_id})
-        data = await self._get("/comments", params={"task_id": task_id})
-        return [TodoistComment(**comment) for comment in data]
+        results = await self._get_paginated("/comments", params={"task_id": task_id})
+        return [TodoistComment(**comment) for comment in results]
 
     async def get_active_tasks_with_label(self, label: str = "capsync") -> List[TodoistTask]:
         """
         Fetch all active tasks with the specified label using Todoist filter.
-        
+
         This uses Todoist's server-side filter parameter for efficiency rather than
         fetching all tasks and filtering client-side.
 
@@ -201,17 +288,17 @@ class TodoistClient:
             List of TodoistTask objects
         """
         logger.info("Fetching active tasks with label", extra={"label": label})
-        
+
         # Use Todoist's filter parameter for server-side filtering
         # Remove @ if present since we want just the label name
         label_filter = label.lstrip('@')
-        
+
         # Use Todoist's filter syntax: @label_name for labels
         params = {"filter": f"@{label_filter}"}
-        
+
         try:
-            data = await self._get("/tasks", params=params)
-            tasks = [TodoistTask(**task) for task in data]
+            results = await self._get_paginated("/tasks", params=params)
+            tasks = [TodoistTask(**task) for task in results]
             logger.info(
                 "Fetched tasks with label",
                 extra={"label": label_filter, "count": len(tasks)},
@@ -225,7 +312,7 @@ class TodoistClient:
             # Fallback to client-side filtering if filter parameter not supported
             all_tasks = await self.get_tasks()
             filtered_tasks = [
-                task for task in all_tasks 
+                task for task in all_tasks
                 if label in task.labels or f"@{label}" in task.labels
             ]
             logger.info(
@@ -272,10 +359,10 @@ class TodoistClient:
             )
             # Return current task
             return await self.get_task(task_id)
-        
+
         # Add the new label to existing labels
         updated_labels = current_labels + [label]
-        
+
         logger.info(
             "Adding label to Todoist task",
             extra={"task_id": task_id, "label": label},
@@ -301,7 +388,7 @@ class TodoistClient:
             label_to_remove = label
         elif f"@{label}" in current_labels:
             label_to_remove = f"@{label}"
-        
+
         if not label_to_remove:
             logger.debug(
                 "Label not found on task",
@@ -309,10 +396,10 @@ class TodoistClient:
             )
             # Return current task
             return await self.get_task(task_id)
-        
+
         # Remove the label from existing labels
         updated_labels = [l for l in current_labels if l != label_to_remove]
-        
+
         logger.info(
             "Removing label from Todoist task",
             extra={"task_id": task_id, "label": label},
@@ -365,3 +452,112 @@ class TodoistClient:
         data = await self._post(f"/projects/{project_id}", {"name": new_name})
         return TodoistProject(**data)
 
+    async def get_parent_project(self, project_id: str) -> Optional[TodoistProject]:
+        """
+        Fetch a project by ID (alias for get_project for backward compat).
+
+        Args:
+            project_id: Todoist project ID
+
+        Returns:
+            TodoistProject object or None
+        """
+        try:
+            return await self.get_project(project_id)
+        except Exception:
+            return None
+
+    # ================================================================
+    # Write operations (for Notion→Todoist bidirectional sync)
+    # ================================================================
+
+    async def create_task(
+        self,
+        content: str,
+        project_id: str,
+        priority: int = 1,
+        due_date: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ) -> TodoistTask:
+        """
+        Create a new task in Todoist.
+
+        Args:
+            content: Task title/content
+            project_id: Project ID to create task in
+            priority: Priority 1-4
+            due_date: Due date string (YYYY-MM-DD)
+            labels: List of label names
+
+        Returns:
+            Created TodoistTask
+        """
+        logger.info("Creating Todoist task", extra={"content": content, "project_id": project_id})
+        payload: Dict[str, Any] = {
+            "content": content,
+            "project_id": project_id,
+            "priority": priority,
+        }
+        if due_date:
+            payload["due_date"] = due_date
+        if labels:
+            payload["labels"] = labels
+
+        data = await self._post("/tasks", payload)
+        return TodoistTask(**data)
+
+    async def update_task(
+        self,
+        task_id: str,
+        content: Optional[str] = None,
+        priority: Optional[int] = None,
+        due_date: Optional[str] = None,
+    ) -> TodoistTask:
+        """
+        Update a task's properties in Todoist.
+
+        Only provided fields will be updated.
+
+        Args:
+            task_id: Todoist task ID
+            content: New title/content
+            priority: New priority 1-4
+            due_date: New due date (YYYY-MM-DD) or None to clear
+
+        Returns:
+            Updated TodoistTask
+        """
+        logger.info("Updating Todoist task", extra={"task_id": task_id})
+        payload: Dict[str, Any] = {}
+        if content is not None:
+            payload["content"] = content
+        if priority is not None:
+            payload["priority"] = priority
+        if due_date is not None:
+            payload["due_date"] = due_date
+
+        if not payload:
+            return await self.get_task(task_id)
+
+        data = await self._post(f"/tasks/{task_id}", payload)
+        return TodoistTask(**data)
+
+    async def complete_task(self, task_id: str) -> None:
+        """
+        Mark a task as complete in Todoist.
+
+        Args:
+            task_id: Todoist task ID
+        """
+        logger.info("Completing Todoist task", extra={"task_id": task_id})
+        await self._post(f"/tasks/{task_id}/close")
+
+    async def uncomplete_task(self, task_id: str) -> None:
+        """
+        Reopen a completed task in Todoist.
+
+        Args:
+            task_id: Todoist task ID
+        """
+        logger.info("Reopening Todoist task", extra={"task_id": task_id})
+        await self._post(f"/tasks/{task_id}/reopen")

@@ -171,15 +171,15 @@ class TestURLBuilders:
     """Test URL building functions."""
 
     def test_build_todoist_task_url(self):
-        task_id = "12345678"
+        task_id = "6fWhf2rxhj5fWXfQ"
         url = build_todoist_task_url(task_id)
-        assert url == "https://todoist.com/showTask?id=12345678"
+        assert url == "https://app.todoist.com/app/task/6fWhf2rxhj5fWXfQ"
         assert task_id in url
 
     def test_build_todoist_project_url(self):
-        project_id = "98765"
+        project_id = "6fWhcxpxPcp5v6rx"
         url = build_todoist_project_url(project_id)
-        assert url == "https://todoist.com/app/project/98765"
+        assert url == "https://app.todoist.com/app/project/6fWhcxpxPcp5v6rx"
         assert project_id in url
 
     def test_url_builder_with_special_chars(self):
@@ -271,14 +271,16 @@ class TestExtractParaAreas:
         areas = extract_para_areas(labels)
         assert areas == []
 
-    def test_area_with_emoji_required(self):
-        """Test that only labels with folder emoji are considered areas."""
+    def test_area_with_and_without_emoji(self):
+        """Test that areas match with or without folder emoji."""
         labels = ["WORK 📁", "HEALTH", "capsync"]
         areas = extract_para_areas(labels)
-        # Only WORK with emoji should be extracted
+        # WORK with emoji should be extracted
         assert "WORK" in areas
-        # HEALTH without emoji should not be extracted
-        assert "HEALTH" not in areas
+        # HEALTH without emoji should also be extracted (exact match against PARA areas)
+        assert "HEALTH" in areas
+        # capsync is not a PARA area
+        assert "capsync" not in areas
 
     def test_case_insensitive_matching(self):
         """Test that area matching is case-insensitive."""

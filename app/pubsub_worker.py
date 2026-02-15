@@ -7,6 +7,7 @@ from app.notion_client import NotionClient
 from app.logging_setup import get_logger
 from app.mapper import create_archived_todo, map_project_to_notion, map_task_to_todo
 from app.models import PubSubMessage, SyncAction, SyncStatus, TaskSyncState, TodoistTask
+from app.reverse_mapper import compute_notion_properties_hash
 from app.settings import settings
 from app.store import FirestoreStore
 from app.todoist_client import TodoistClient
@@ -104,7 +105,7 @@ class SyncWorker:
         
         if not has_capsync_label(task.labels):
             # If task is completed and was previously synced, update it to mark as complete
-            if task.is_completed and existing_state:
+            if task.checked and existing_state:
                 logger.info(
                     "Completed task without label - updating to mark complete",
                     extra={"task_id": task_id},
@@ -278,11 +279,23 @@ class SyncWorker:
             result = await self.notion.create_todo_page(todo, project_notion_id, area_page_ids, people_page_ids)
             notion_page_id = result.get("id")
 
+        # Compute notion_payload_hash for echo suppression
+        # This hash represents what we just wrote to Notion. When the Notion poller
+        # sees this page was "edited", it compares hashes and skips if they match
+        # (preventing Todoist→Notion→Todoist echo loops)
+        notion_hash = compute_notion_properties_hash({
+            "title": todo.title,
+            "priority": todo.priority,
+            "due_date": todo.due_date,
+            "completed": todo.completed,
+        })
+
         # Update sync state
         new_state = TaskSyncState(
             todoist_task_id=task_id,
             capacities_object_id=notion_page_id,  # Using same field name for compatibility
             payload_hash=payload_hash,
+            notion_payload_hash=notion_hash,
             last_synced_at=datetime.now(),
             sync_status=SyncStatus.OK,
             sync_source=sync_source,

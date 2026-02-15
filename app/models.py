@@ -1,19 +1,21 @@
-"""Pydantic models for Todoist and Capacities data structures."""
+"""Pydantic models for Todoist and Notion data structures."""
 
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ============================================================================
-# Todoist Models
+# Todoist Models (API v1)
 # ============================================================================
 
 
 class TodoistDue(BaseModel):
     """Todoist due date information."""
+
+    model_config = ConfigDict(extra="ignore")
 
     date: str  # YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS
     string: str  # Human-readable date string
@@ -22,7 +24,9 @@ class TodoistDue(BaseModel):
 
 
 class TodoistTask(BaseModel):
-    """Todoist task object."""
+    """Todoist task object (API v1 format)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     id: str
     content: str
@@ -33,25 +37,28 @@ class TodoistTask(BaseModel):
     labels: list[str] = Field(default_factory=list)
     priority: int = 1  # 1-4
     due: Optional[TodoistDue] = None
-    url: str
-    created_at: str
-    is_completed: bool = False
+    added_at: str  # v1: was 'created_at' in v2
+    checked: bool = False  # v1: was 'is_completed' in v2
     completed_at: Optional[str] = None
+    updated_at: Optional[str] = None  # v1: task update timestamp
 
 
 class TodoistProject(BaseModel):
-    """Todoist project object."""
+    """Todoist project object (API v1 format)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     id: str
     name: str
     color: str
     is_shared: bool = False
     is_archived: bool = False
-    url: str
 
 
 class TodoistSection(BaseModel):
-    """Todoist section object."""
+    """Todoist section object (API v1 format)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     id: str
     name: str
@@ -59,12 +66,21 @@ class TodoistSection(BaseModel):
 
 
 class TodoistComment(BaseModel):
-    """Todoist comment object."""
+    """Todoist comment object (API v1 format)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     id: str
-    task_id: str
+    task_id: Optional[str] = None
+    item_id: Optional[str] = None  # v1 may use item_id instead of task_id
     content: str
-    posted_at: str
+    posted_at: Optional[str] = None  # v1 may use different field name
+    added_at: Optional[str] = None  # v1 alternative timestamp field
+
+    @property
+    def timestamp(self) -> str:
+        """Get the comment timestamp, preferring posted_at then added_at."""
+        return self.posted_at or self.added_at or ""
 
 
 # ============================================================================
@@ -145,7 +161,8 @@ class TaskSyncState(BaseModel):
     last_synced_at: datetime
     sync_status: SyncStatus = SyncStatus.OK
     error_message: Optional[str] = None
-    sync_source: Optional[str] = None  # "webhook" or "reconciliation"
+    sync_source: Optional[str] = None  # "webhook", "reconciliation", or "migration"
+    notion_payload_hash: Optional[str] = None  # Hash of Notion properties for echo suppression
 
 
 class ProjectSyncState(BaseModel):
@@ -185,8 +202,9 @@ class PubSubMessage(BaseModel):
 class TodoistWebhookEvent(BaseModel):
     """Todoist webhook event payload."""
 
+    model_config = ConfigDict(extra="ignore")
+
     event_name: str  # e.g., "item:added", "item:updated", "item:completed"
     event_data: dict[str, Any]
     user_id: str
     version: str = "9"
-
