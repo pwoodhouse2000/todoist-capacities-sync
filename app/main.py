@@ -93,10 +93,49 @@ async def health_check() -> Dict[str, str]:
     return {"status": "healthy"}
 
 
+def _verify_webhook_signature(body: bytes, signature_header: str) -> bool:
+    """
+    Verify Todoist webhook HMAC-SHA256 signature.
+
+    Args:
+        body: Raw request body bytes
+        signature_header: Value of X-Todoist-Hmac-SHA256 header
+
+    Returns:
+        True if signature is valid
+    """
+    import base64
+    import hashlib
+    import hmac
+
+    if not settings.todoist_client_secret:
+        # No client secret configured - skip verification (dev mode)
+        logger.debug("Webhook HMAC verification skipped (no client secret configured)")
+        return True
+
+    if not signature_header:
+        logger.warning("Webhook missing X-Todoist-Hmac-SHA256 header")
+        return False
+
+    expected = base64.b64encode(
+        hmac.new(
+            settings.todoist_client_secret.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).digest()
+    ).decode("utf-8")
+
+    is_valid = hmac.compare_digest(expected, signature_header)
+    if not is_valid:
+        logger.warning("Webhook HMAC signature mismatch")
+
+    return is_valid
+
+
 @app.post("/todoist/webhook")
 async def todoist_webhook(request: Request) -> Dict[str, Any]:
     """
-    Receive Todoist webhook events.
+    Receive Todoist webhook events with HMAC signature verification.
 
     Args:
         request: FastAPI request object
@@ -104,19 +143,32 @@ async def todoist_webhook(request: Request) -> Dict[str, Any]:
     Returns:
         Response dictionary
     """
+    # Read raw body for HMAC verification
+    body = await request.body()
+
+    # Verify HMAC signature
+    signature = request.headers.get("X-Todoist-Hmac-SHA256", "")
+    if not _verify_webhook_signature(body, signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature",
+        )
+
     # Check if running in local dev mode (no Pub/Sub)
     if not request.app.state.webhook_handler:
         logger.info("Received webhook in local dev mode (Pub/Sub not available)")
-        payload = await request.json()
+        import orjson
+        payload = orjson.loads(body)
         return {
             "status": "received_local_dev",
             "message": "Running in local dev mode without Pub/Sub. Deploy to GCP for full functionality.",
             "event": payload.get("event_name", "unknown"),
         }
-    
+
     try:
-        # Parse webhook payload
-        payload = await request.json()
+        # Parse webhook payload from raw body
+        import orjson
+        payload = orjson.loads(body)
         event = TodoistWebhookEvent(**payload)
 
         # Handle event

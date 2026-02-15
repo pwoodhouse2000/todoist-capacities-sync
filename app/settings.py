@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     retry_delay: float = 1.0
     request_timeout: int = 30
 
+    # Todoist Webhook Configuration
+    todoist_client_secret: str = ""  # For HMAC webhook verification (from Todoist App Console)
+
     # Feature flags
     add_notion_backlink: bool = True  # Add Notion page link to Todoist task description
     enable_para_areas: bool = True  # Enable PARA method area mapping
