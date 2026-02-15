@@ -273,18 +273,11 @@ class ReconcileHandler:
         # Step 2: Reconcile projects (archival status + name sync)
         await self._reconcile_projects()
 
-        # Step 3a: Bidirectional Notion→Todoist sync (edit existing tasks)
-        notion_to_todoist_count = 0
-        if settings.enable_notion_to_todoist:
-            notion_to_todoist_count = await self._sync_notion_to_todoist()
-
-        # Step 3b: Create Todoist tasks from new Notion pages
-        notion_created_count = 0
-        if settings.enable_notion_task_creation:
-            notion_created_count = await self._create_todoist_tasks_from_notion()
-
-        # Step 3c: Fetch all Todoist tasks with capsync label (both active AND completed)
-        # We need to include completed tasks so they can be marked as completed in Notion
+        # Step 3: Todoist→Notion sync FIRST (authoritative direction)
+        # IMPORTANT: This must run BEFORE Notion→Todoist to ensure Todoist changes
+        # land in Notion first. This updates the notion_payload_hash in Firestore,
+        # so the subsequent Notion→Todoist step correctly recognizes these as echoes
+        # and doesn't push stale Notion values back to Todoist.
         active_tasks = await self.todoist.get_active_tasks_with_label()
 
         # Also fetch completed tasks with capsync label (they need to sync to Notion too)
@@ -338,11 +331,20 @@ class ReconcileHandler:
                     extra={"task_id": task.id, "error": str(e)},
                 )
 
-        # Note: Completed tasks are already included in all_fetched_tasks above
-        # (fetched via the "@capsync & is:completed" filter in lines 276-280)
-        # active_task_ids already includes both active and completed tasks
+        # Step 4: Notion→Todoist sync AFTER Todoist→Notion
+        # Now that all Todoist changes have been written to Notion (with updated hashes),
+        # this step will only push genuinely user-initiated Notion edits to Todoist.
+        # Echo suppression will correctly skip any pages that were just updated by Step 3.
+        notion_to_todoist_count = 0
+        if settings.enable_notion_to_todoist:
+            notion_to_todoist_count = await self._sync_notion_to_todoist()
 
-        # Find tasks that need archiving (in store but not in active tasks)
+        # Step 5: Create Todoist tasks from new Notion pages
+        notion_created_count = 0
+        if settings.enable_notion_task_creation:
+            notion_created_count = await self._create_todoist_tasks_from_notion()
+
+        # Step 6: Archive tasks that are no longer in Todoist
         tasks_to_archive = stored_task_ids - active_task_ids
         archived = 0
 
