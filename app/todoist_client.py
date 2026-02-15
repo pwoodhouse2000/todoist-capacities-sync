@@ -440,3 +440,98 @@ class TodoistClient:
             return await self.get_project(project_id)
         except Exception:
             return None
+
+    # ================================================================
+    # Write operations (for Notion→Todoist bidirectional sync)
+    # ================================================================
+
+    async def create_task(
+        self,
+        content: str,
+        project_id: str,
+        priority: int = 1,
+        due_date: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+    ) -> TodoistTask:
+        """
+        Create a new task in Todoist.
+
+        Args:
+            content: Task title/content
+            project_id: Project ID to create task in
+            priority: Priority 1-4
+            due_date: Due date string (YYYY-MM-DD)
+            labels: List of label names
+
+        Returns:
+            Created TodoistTask
+        """
+        logger.info("Creating Todoist task", extra={"content": content, "project_id": project_id})
+        payload: Dict[str, Any] = {
+            "content": content,
+            "project_id": project_id,
+            "priority": priority,
+        }
+        if due_date:
+            payload["due_date"] = due_date
+        if labels:
+            payload["labels"] = labels
+
+        data = await self._post("/tasks", payload)
+        return TodoistTask(**data)
+
+    async def update_task(
+        self,
+        task_id: str,
+        content: Optional[str] = None,
+        priority: Optional[int] = None,
+        due_date: Optional[str] = None,
+    ) -> TodoistTask:
+        """
+        Update a task's properties in Todoist.
+
+        Only provided fields will be updated.
+
+        Args:
+            task_id: Todoist task ID
+            content: New title/content
+            priority: New priority 1-4
+            due_date: New due date (YYYY-MM-DD) or None to clear
+
+        Returns:
+            Updated TodoistTask
+        """
+        logger.info("Updating Todoist task", extra={"task_id": task_id})
+        payload: Dict[str, Any] = {}
+        if content is not None:
+            payload["content"] = content
+        if priority is not None:
+            payload["priority"] = priority
+        if due_date is not None:
+            payload["due_date"] = due_date
+
+        if not payload:
+            return await self.get_task(task_id)
+
+        data = await self._post(f"/tasks/{task_id}", payload)
+        return TodoistTask(**data)
+
+    async def complete_task(self, task_id: str) -> None:
+        """
+        Mark a task as complete in Todoist.
+
+        Args:
+            task_id: Todoist task ID
+        """
+        logger.info("Completing Todoist task", extra={"task_id": task_id})
+        await self._post(f"/tasks/{task_id}/close")
+
+    async def uncomplete_task(self, task_id: str) -> None:
+        """
+        Reopen a completed task in Todoist.
+
+        Args:
+            task_id: Todoist task ID
+        """
+        logger.info("Reopening Todoist task", extra={"task_id": task_id})
+        await self._post(f"/tasks/{task_id}/reopen")

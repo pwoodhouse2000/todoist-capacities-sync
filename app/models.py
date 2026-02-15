@@ -161,7 +161,8 @@ class TaskSyncState(BaseModel):
     last_synced_at: datetime
     sync_status: SyncStatus = SyncStatus.OK
     error_message: Optional[str] = None
-    sync_source: Optional[str] = None  # "webhook" or "reconciliation"
+    sync_source: Optional[str] = None  # "webhook", "reconciliation", or "migration"
+    notion_payload_hash: Optional[str] = None  # Hash of Notion properties for echo suppression
 
 
 class ProjectSyncState(BaseModel):

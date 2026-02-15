@@ -815,3 +815,116 @@ class NotionClient:
 
         return matched_page_ids
 
+    # ================================================================
+    # Bidirectional sync query methods
+    # ================================================================
+
+    async def get_tasks_edited_since(self, timestamp: str) -> List[Dict[str, Any]]:
+        """
+        Fetch task pages edited after the given timestamp.
+
+        Args:
+            timestamp: ISO 8601 timestamp (e.g., "2026-02-15T00:00:00Z")
+
+        Returns:
+            List of Notion page objects edited after timestamp
+        """
+        logger.info("Fetching tasks edited since", extra={"since": timestamp})
+
+        all_pages = []
+        has_more = True
+        start_cursor = None
+
+        while has_more:
+            query_params = {"page_size": 100}
+            if start_cursor:
+                query_params["start_cursor"] = start_cursor
+
+            response = await self._query_database_direct(
+                database_id=self.tasks_db_id,
+                filter={
+                    "timestamp": "last_edited_time",
+                    "last_edited_time": {"after": timestamp},
+                },
+                **query_params
+            )
+
+            all_pages.extend(response.get("results", []))
+            has_more = response.get("has_more", False)
+            start_cursor = response.get("next_cursor")
+
+        logger.info("Fetched edited task pages", extra={"count": len(all_pages)})
+        return all_pages
+
+    async def get_tasks_without_todoist_id(self) -> List[Dict[str, Any]]:
+        """
+        Fetch task pages that have no Todoist Task ID set.
+
+        These are tasks created directly in Notion that need to be
+        pushed to Todoist.
+
+        Returns:
+            List of Notion page objects without Todoist Task ID
+        """
+        logger.info("Fetching tasks without Todoist ID")
+
+        all_pages = []
+        has_more = True
+        start_cursor = None
+
+        while has_more:
+            query_params = {"page_size": 100}
+            if start_cursor:
+                query_params["start_cursor"] = start_cursor
+
+            response = await self._query_database_direct(
+                database_id=self.tasks_db_id,
+                filter={
+                    "and": [
+                        {
+                            "property": "Todoist Task ID",
+                            "rich_text": {"is_empty": True},
+                        },
+                        {
+                            "property": "Name",
+                            "title": {"is_not_empty": True},
+                        },
+                    ]
+                },
+                **query_params
+            )
+
+            all_pages.extend(response.get("results", []))
+            has_more = response.get("has_more", False)
+            start_cursor = response.get("next_cursor")
+
+        logger.info("Fetched tasks without Todoist ID", extra={"count": len(all_pages)})
+        return all_pages
+
+    async def set_todoist_task_id(self, page_id: str, task_id: str, task_url: str) -> Dict[str, Any]:
+        """
+        Set the Todoist Task ID and URL on a Notion page.
+
+        Used after creating a task in Todoist from a Notion page.
+
+        Args:
+            page_id: Notion page ID
+            task_id: Todoist task ID
+            task_url: Todoist task URL
+
+        Returns:
+            Updated page data
+        """
+        logger.info(
+            "Setting Todoist Task ID on Notion page",
+            extra={"page_id": page_id, "task_id": task_id},
+        )
+
+        return await self.client.pages.update(
+            page_id=page_id,
+            properties={
+                "Todoist Task ID": {"rich_text": [{"text": {"content": task_id}}]},
+                "Todoist URL": {"url": task_url},
+            },
+        )
+

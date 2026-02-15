@@ -1,17 +1,23 @@
 """Request handlers for webhooks and reconciliation."""
 
-from typing import Any, Dict, Optional, Union
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Union
 
 from google.cloud import pubsub_v1
 
 from app.notion_client import NotionClient
 from app.logging_setup import get_logger
-from app.models import PubSubMessage, SyncAction, TodoistTask, TodoistWebhookEvent
+from app.models import PubSubMessage, SyncAction, SyncStatus, TaskSyncState, TodoistTask, TodoistWebhookEvent
 from app.pubsub_worker import SyncWorker
+from app.reverse_mapper import (
+    compute_notion_properties_hash,
+    extract_notion_task_properties,
+    notion_props_differ,
+)
 from app.settings import settings
 from app.store import FirestoreStore
 from app.todoist_client import TodoistClient
-from app.utils import has_capsync_label, should_auto_label_task
+from app.utils import build_todoist_task_url, compute_payload_hash, has_capsync_label, should_auto_label_task
 
 logger = get_logger(__name__)
 
@@ -249,9 +255,9 @@ class ReconcileHandler:
     async def reconcile(self) -> Dict[str, Any]:
         """
         Perform full reconciliation of all @capsync tasks.
-        
+
         Auto-adds capsync label to eligible tasks (not in Inbox, not recurring, not completed)
-        then syncs all tasks with the label.
+        then syncs all tasks with the label. Also syncs Notion→Todoist changes.
 
         Returns:
             Reconciliation summary
@@ -260,14 +266,21 @@ class ReconcileHandler:
 
         # Step 1: Auto-label eligible tasks
         auto_labeled_count = await self._auto_label_tasks()
-        
-        # Step 2: Reconcile projects (archival status)
+
+        # Step 2: Reconcile projects (archival status + name sync)
         await self._reconcile_projects()
 
-        # Step 3a: Pull edits from Notion back to Todoist (titles + priority + project titles)
-        await self._reconcile_notion_to_todoist()
+        # Step 3a: Bidirectional Notion→Todoist sync (edit existing tasks)
+        notion_to_todoist_count = 0
+        if settings.enable_notion_to_todoist:
+            notion_to_todoist_count = await self._sync_notion_to_todoist()
 
-        # Step 3b: Fetch all Todoist tasks with capsync label (both active AND completed)
+        # Step 3b: Create Todoist tasks from new Notion pages
+        notion_created_count = 0
+        if settings.enable_notion_task_creation:
+            notion_created_count = await self._create_todoist_tasks_from_notion()
+
+        # Step 3c: Fetch all Todoist tasks with capsync label (both active AND completed)
         # We need to include completed tasks so they can be marked as completed in Notion
         active_tasks = await self.todoist.get_active_tasks_with_label()
         
@@ -340,6 +353,8 @@ class ReconcileHandler:
             "status": "completed",
             "active_tasks": len(active_tasks),
             "auto_labeled": auto_labeled_count,
+            "notion_to_todoist_synced": notion_to_todoist_count,
+            "notion_created_in_todoist": notion_created_count,
             "upserted": upserted,
             "archived": archived,
             "total_stored": len(stored_states),
@@ -352,10 +367,11 @@ class ReconcileHandler:
     async def _reconcile_projects(self) -> None:
         """
         Reconcile all Todoist projects, syncing name changes and archival status.
+        Also syncs project names from Notion → Todoist (bidirectional).
         """
         logger.info("Starting project reconciliation")
         all_todoist_projects = await self.todoist.get_projects()
-        
+
         for project in all_todoist_projects:
             # Try to find existing project in Notion
             existing_page = await self.notion.find_project_by_todoist_id(project.id)
@@ -363,7 +379,7 @@ class ReconcileHandler:
                 continue
 
             notion_page_id = existing_page["id"]
-            
+
             # Sync archival status
             try:
                 if project.is_archived:
@@ -379,23 +395,322 @@ class ReconcileHandler:
             except Exception as e:
                 logger.warning(f"Failed to update project status for {project.id}: {e}")
 
-    async def _reconcile_notion_to_todoist(self) -> None:
+        # Also sync project names from Notion → Todoist
+        await self._reconcile_notion_project_names()
+
+    async def _sync_notion_to_todoist(self) -> int:
         """
-        Pull selected edits from Notion into Todoist.
-        
+        Poll Notion for task changes and push diffs to Todoist.
+
+        Uses hash-based echo suppression:
+        - Computes current notion_properties_hash for each edited page
+        - Compares against stored notion_payload_hash
+        - If equal → our own echo from a recent Todoist→Notion push → skip
+        - If different → genuine Notion edit → push changes to Todoist
+
+        Returns:
+            Number of tasks synced from Notion→Todoist
+        """
+        logger.info("Starting Notion→Todoist sync")
+
+        # Get last reconciliation timestamp
+        last_reconcile = await self.store.get_last_reconcile_time()
+        if not last_reconcile:
+            # First run: use a reasonable default (1 hour ago)
+            one_hour_ago = datetime.now(timezone.utc).isoformat()
+            logger.info("No last reconcile time, setting initial timestamp")
+            await self.store.set_last_reconcile_time(one_hour_ago)
+            return 0
+
+        # Fetch Notion pages edited since last reconcile
+        try:
+            edited_pages = await self.notion.get_tasks_edited_since(last_reconcile)
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch edited Notion pages",
+                extra={"error": str(e)},
+            )
+            return 0
+
+        logger.info(
+            "Found Notion pages edited since last reconcile",
+            extra={"count": len(edited_pages), "since": last_reconcile},
+        )
+
+        # Build project state lookup for resolving Notion project IDs → Todoist project IDs
+        project_states = await self.store.get_all_project_states()
+        notion_to_todoist_project = {
+            ps.capacities_object_id: ps.todoist_project_id
+            for ps in project_states
+            if ps.capacities_object_id
+        }
+
+        synced_count = 0
+
+        for page in edited_pages:
+            try:
+                # Extract sync-relevant properties
+                notion_props = extract_notion_task_properties(page)
+                todoist_task_id = notion_props.get("todoist_task_id", "")
+
+                # Skip pages without Todoist Task ID (handled by _create_todoist_tasks_from_notion)
+                if not todoist_task_id:
+                    continue
+
+                # Compute current hash of Notion properties
+                current_hash = compute_notion_properties_hash(notion_props)
+
+                # Look up stored state
+                state = await self.store.get_task_state(todoist_task_id)
+                if not state:
+                    logger.debug(
+                        "No Firestore state for task, skipping Notion→Todoist",
+                        extra={"todoist_task_id": todoist_task_id},
+                    )
+                    continue
+
+                # Echo suppression: compare hashes
+                if state.notion_payload_hash == current_hash:
+                    logger.debug(
+                        "Notion page unchanged (echo suppressed)",
+                        extra={"todoist_task_id": todoist_task_id},
+                    )
+                    continue
+
+                # Fetch current Todoist task to compare
+                try:
+                    todoist_task = await self.todoist.get_task(todoist_task_id)
+                except Exception as e:
+                    logger.warning(
+                        "Could not fetch Todoist task for comparison",
+                        extra={"todoist_task_id": todoist_task_id, "error": str(e)},
+                    )
+                    continue
+
+                # Determine what changed
+                todoist_due = todoist_task.due.date if todoist_task.due else None
+                changes = notion_props_differ(
+                    notion_props,
+                    todoist_title=todoist_task.content,
+                    todoist_priority=todoist_task.priority,
+                    todoist_due_date=todoist_due,
+                    todoist_completed=todoist_task.checked,
+                )
+
+                if not changes:
+                    # Properties match Todoist — update stored hash to prevent future comparisons
+                    state.notion_payload_hash = current_hash
+                    await self.store.save_task_state(state)
+                    continue
+
+                logger.info(
+                    "Notion→Todoist: pushing changes",
+                    extra={
+                        "todoist_task_id": todoist_task_id,
+                        "changes": list(changes.keys()),
+                    },
+                )
+
+                # Apply changes to Todoist
+                # Handle completion separately from property updates
+                if "completed" in changes:
+                    if changes["completed"]:
+                        await self.todoist.complete_task(todoist_task_id)
+                        logger.info("Marked task complete in Todoist", extra={"task_id": todoist_task_id})
+                    else:
+                        await self.todoist.uncomplete_task(todoist_task_id)
+                        logger.info("Reopened task in Todoist", extra={"task_id": todoist_task_id})
+
+                # Apply property changes (title, priority, due_date)
+                prop_changes = {k: v for k, v in changes.items() if k != "completed"}
+                if prop_changes:
+                    await self.todoist.update_task(
+                        todoist_task_id,
+                        content=prop_changes.get("title"),
+                        priority=prop_changes.get("priority"),
+                        due_date=prop_changes.get("due_date"),
+                    )
+
+                # After pushing to Todoist, update both hashes to prevent echo loop:
+                # 1. notion_payload_hash = current Notion state (prevents re-pushing same changes)
+                # 2. payload_hash = re-computed from the Todoist task (prevents the resulting
+                #    Todoist→Notion push from creating an echo)
+                from app.mapper import map_task_to_todo
+                updated_task = await self.todoist.get_task(todoist_task_id)
+                project = await self.todoist.get_project(updated_task.project_id)
+                comments = await self.todoist.get_comments(todoist_task_id)
+                todo = map_task_to_todo(updated_task, project, comments)
+                new_payload_hash = compute_payload_hash(todo.model_dump())
+
+                state.payload_hash = new_payload_hash
+                state.notion_payload_hash = current_hash
+                state.last_synced_at = datetime.now()
+                state.sync_source = "notion-to-todoist"
+                await self.store.save_task_state(state)
+
+                synced_count += 1
+
+            except Exception as e:
+                page_id = page.get("id", "unknown")
+                logger.error(
+                    "Error syncing Notion page to Todoist",
+                    extra={"page_id": page_id, "error": str(e)},
+                    exc_info=True,
+                )
+
+        # Update last reconcile time
+        await self.store.set_last_reconcile_time(
+            datetime.now(timezone.utc).isoformat()
+        )
+
+        logger.info(
+            "Notion→Todoist sync complete",
+            extra={"synced": synced_count, "checked": len(edited_pages)},
+        )
+
+        return synced_count
+
+    async def _create_todoist_tasks_from_notion(self) -> int:
+        """
+        Find Notion task pages without a Todoist Task ID and create tasks in Todoist.
+
+        Returns:
+            Number of tasks created in Todoist
+        """
+        logger.info("Checking for new Notion tasks to create in Todoist")
+
+        try:
+            pages = await self.notion.get_tasks_without_todoist_id()
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch Notion pages without Todoist ID",
+                extra={"error": str(e)},
+            )
+            return 0
+
+        if not pages:
+            logger.info("No new Notion tasks to create in Todoist")
+            return 0
+
+        logger.info("Found Notion tasks to create in Todoist", extra={"count": len(pages)})
+
+        # Build project lookup
+        project_states = await self.store.get_all_project_states()
+        notion_to_todoist_project = {
+            ps.capacities_object_id: ps.todoist_project_id
+            for ps in project_states
+            if ps.capacities_object_id
+        }
+
+        created_count = 0
+
+        for page in pages:
+            try:
+                notion_props = extract_notion_task_properties(page)
+                title = notion_props.get("title", "")
+                notion_page_id = notion_props.get("notion_page_id", "")
+
+                if not title or not notion_page_id:
+                    continue
+
+                # Skip archived/deleted pages
+                if page.get("archived", False):
+                    continue
+
+                # Resolve project: Notion project relation → Todoist project ID
+                todoist_project_id = None
+                project_notion_id = notion_props.get("project_notion_id")
+                if project_notion_id:
+                    todoist_project_id = notion_to_todoist_project.get(project_notion_id)
+
+                if not todoist_project_id:
+                    # Default: find first non-Inbox project or use a default
+                    # For now, log and skip - user should assign a project in Notion
+                    logger.warning(
+                        "Notion task has no mapped project, skipping creation",
+                        extra={"notion_page_id": notion_page_id, "title": title},
+                    )
+                    continue
+
+                # Build task data
+                priority = notion_props.get("priority", 1)
+                due_date = notion_props.get("due_date")
+                labels = ["capsync"]  # Always add capsync label
+
+                # Create task in Todoist
+                new_task = await self.todoist.create_task(
+                    content=title,
+                    project_id=todoist_project_id,
+                    priority=priority,
+                    due_date=due_date,
+                    labels=labels,
+                )
+
+                logger.info(
+                    "Created Todoist task from Notion",
+                    extra={
+                        "todoist_task_id": new_task.id,
+                        "notion_page_id": notion_page_id,
+                        "title": title,
+                    },
+                )
+
+                # Set Todoist Task ID and URL back on the Notion page
+                task_url = build_todoist_task_url(new_task.id)
+                await self.notion.set_todoist_task_id(notion_page_id, new_task.id, task_url)
+
+                # Compute hashes for echo suppression
+                notion_hash = compute_notion_properties_hash(notion_props)
+
+                from app.mapper import map_task_to_todo
+                project = await self.todoist.get_project(todoist_project_id)
+                comments = await self.todoist.get_comments(new_task.id)
+                todo = map_task_to_todo(new_task, project, comments)
+                payload_hash = compute_payload_hash(todo.model_dump())
+
+                # Create Firestore state
+                new_state = TaskSyncState(
+                    todoist_task_id=new_task.id,
+                    capacities_object_id=notion_page_id,
+                    payload_hash=payload_hash,
+                    notion_payload_hash=notion_hash,
+                    last_synced_at=datetime.now(),
+                    sync_status=SyncStatus.OK,
+                    sync_source="notion-created",
+                )
+                await self.store.save_task_state(new_state)
+
+                created_count += 1
+
+            except Exception as e:
+                page_id = page.get("id", "unknown")
+                logger.error(
+                    "Error creating Todoist task from Notion",
+                    extra={"page_id": page_id, "error": str(e)},
+                    exc_info=True,
+                )
+
+        logger.info(
+            "Notion task creation complete",
+            extra={"created": created_count},
+        )
+
+        return created_count
+
+    async def _reconcile_notion_project_names(self) -> None:
+        """
+        Pull project name edits from Notion into Todoist.
+
         Per sync rules:
         - Projects: Name is bidirectional (Notion wins post-creation)
-        - Tasks: ALL properties are one-way (Todoist always wins)
         """
         try:
-            # 1) Projects: sync Name -> Todoist project name (bidirectional)
-            projects = await self.notion.client.databases.query(
-                database_id=self.notion.projects_db_id,
-                page_size=100,  # Fetch more projects
-            )
-            for page in projects.get("results", []):
+            # Fetch all project pages from Notion
+            project_pages = await self.notion.get_all_project_pages()
+
+            for page in project_pages:
                 props = page.get("properties", {})
-                
+
                 # Safely get name
                 name_prop = props.get("Name", {}).get("title")
                 name = name_prop[0].get("text", {}).get("content") if name_prop else None
@@ -403,20 +718,22 @@ class ReconcileHandler:
                 # Safely get project ID
                 proj_id_prop = props.get("Todoist Project ID", {}).get("rich_text")
                 proj_id = proj_id_prop[0].get("text", {}).get("content") if proj_id_prop else None
-                
+
                 if name and proj_id:
                     try:
                         todoist_proj = await self.todoist.get_project(proj_id)
                         if todoist_proj.name != name:
                             await self.todoist.update_project_name(proj_id, name)
-                            logger.info("Updated Todoist project name from Notion", extra={"project_id": proj_id, "name": name})
+                            logger.info(
+                                "Updated Todoist project name from Notion",
+                                extra={"project_id": proj_id, "name": name},
+                            )
                     except Exception as e:
                         logger.debug(f"Could not sync project {proj_id}: {e}")
 
-            # 2) Tasks: NO sync from Notion → Todoist (Todoist always wins)
-            # All task properties are one-way: Todoist → Notion only
-            # Future: Add bidirectional sync as enhancement
-            
         except Exception as e:
-            logger.warning("Notion->Todoist reconciliation skipped due to error", extra={"error": str(e)})
+            logger.warning(
+                "Notion→Todoist project name sync skipped due to error",
+                extra={"error": str(e)},
+            )
 

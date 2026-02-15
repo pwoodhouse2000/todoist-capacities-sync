@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     enable_para_areas: bool = True  # Enable PARA method area mapping
     enable_people_matching: bool = True  # Enable automatic people matching from labels
     auto_label_tasks: bool = True  # Auto-add capsync label to eligible tasks (not in Inbox, not recurring)
+    enable_notion_to_todoist: bool = True  # Enable bidirectional Notion→Todoist sync
+    enable_notion_task_creation: bool = True  # Enable creating Todoist tasks from Notion
     
     # PARA Method Configuration
     para_area_labels: list[str] = [
