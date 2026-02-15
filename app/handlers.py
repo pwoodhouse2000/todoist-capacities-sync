@@ -6,7 +6,7 @@ from google.cloud import pubsub_v1
 
 from app.notion_client import NotionClient
 from app.logging_setup import get_logger
-from app.models import PubSubMessage, SyncAction, TodoistWebhookEvent
+from app.models import PubSubMessage, SyncAction, TodoistTask, TodoistWebhookEvent
 from app.pubsub_worker import SyncWorker
 from app.settings import settings
 from app.store import FirestoreStore
@@ -185,7 +185,7 @@ class ReconcileHandler:
         
         for task in all_tasks:
             # Skip completed tasks
-            if task.is_completed:
+            if task.checked:
                 continue
             
             # Check if task is recurring
@@ -273,7 +273,7 @@ class ReconcileHandler:
         
         # Also fetch completed tasks with capsync label (they need to sync to Notion too)
         try:
-            completed_tasks_response = await self.todoist._get(
+            completed_tasks_response = await self.todoist._get_paginated(
                 "/tasks",
                 params={"filter": "@capsync & is:completed"}
             )

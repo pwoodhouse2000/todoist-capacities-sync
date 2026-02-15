@@ -104,7 +104,7 @@ class SyncWorker:
         
         if not has_capsync_label(task.labels):
             # If task is completed and was previously synced, update it to mark as complete
-            if task.is_completed and existing_state:
+            if task.checked and existing_state:
                 logger.info(
                     "Completed task without label - updating to mark complete",
                     extra={"task_id": task_id},

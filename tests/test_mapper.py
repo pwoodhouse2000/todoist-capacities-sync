@@ -17,15 +17,13 @@ def test_map_task_to_todo_basic() -> None:
         project_id="proj-1",
         labels=["@capsync", "work"],
         priority=2,
-        url="https://todoist.com/showTask?id=123",
-        created_at="2025-01-01T00:00:00Z",
+        added_at="2025-01-01T00:00:00Z",
     )
 
     project = TodoistProject(
         id="proj-1",
         name="Work Project",
         color="blue",
-        url="https://todoist.com/app/project/proj-1",
     )
 
     comments = []
@@ -52,15 +50,13 @@ def test_map_task_with_due_date() -> None:
             string="Dec 31",
             timezone="America/Los_Angeles",
         ),
-        url="https://todoist.com/showTask?id=123",
-        created_at="2025-01-01T00:00:00Z",
+        added_at="2025-01-01T00:00:00Z",
     )
 
     project = TodoistProject(
         id="proj-1",
         name="Test Project",
         color="red",
-        url="https://todoist.com/app/project/proj-1",
     )
 
     todo = map_task_to_todo(task, project, [])
@@ -81,15 +77,13 @@ def test_map_task_with_due_datetime() -> None:
             string="Dec 31 at 3:30 PM",
             timezone="America/New_York",
         ),
-        url="https://todoist.com/showTask?id=123",
-        created_at="2025-01-01T00:00:00Z",
+        added_at="2025-01-01T00:00:00Z",
     )
 
     project = TodoistProject(
         id="proj-1",
         name="Test Project",
         color="green",
-        url="https://todoist.com/app/project/proj-1",
     )
 
     todo = map_task_to_todo(task, project, [])
@@ -105,15 +99,13 @@ def test_map_task_with_comments() -> None:
         id="123",
         content="Task with comments",
         project_id="proj-1",
-        url="https://todoist.com/showTask?id=123",
-        created_at="2025-01-01T00:00:00Z",
+        added_at="2025-01-01T00:00:00Z",
     )
 
     project = TodoistProject(
         id="proj-1",
         name="Test Project",
         color="purple",
-        url="https://todoist.com/app/project/proj-1",
     )
 
     comments = [
@@ -145,7 +137,6 @@ def test_map_project_to_capacities() -> None:
         name="My Project",
         color="orange",
         is_shared=True,
-        url="https://todoist.com/app/project/proj-1",
     )
 
     capacities_project = map_project_to_notion(project)
@@ -154,6 +145,6 @@ def test_map_project_to_capacities() -> None:
     assert capacities_project.name == "My Project"
     assert capacities_project.color == "orange"
     assert capacities_project.is_shared is True
-    assert capacities_project.url == project.url
+    assert capacities_project.url == "https://todoist.com/app/project/proj-1"
     assert capacities_project.last_synced_at is not None
 

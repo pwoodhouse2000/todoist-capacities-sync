@@ -11,7 +11,7 @@ from app.models import (
     TodoistProject,
     TodoistTask,
 )
-from app.utils import format_markdown_comments, get_current_timestamp, strip_notion_backlink
+from app.utils import build_todoist_project_url, build_todoist_task_url, format_markdown_comments, get_current_timestamp, strip_notion_backlink
 
 logger = get_logger(__name__)
 
@@ -60,7 +60,7 @@ def map_task_to_todo(
 
     # Format comments
     comments_markdown = format_markdown_comments(
-        [{"content": c.content, "posted_at": c.posted_at} for c in comments]
+        [{"content": c.content, "posted_at": c.timestamp} for c in comments]
     )
 
     # Current timestamp
@@ -70,7 +70,7 @@ def map_task_to_todo(
         title=task.content,
         body=body,
         todoist_task_id=task.id,
-        todoist_url=task.url,
+        todoist_url=build_todoist_task_url(task.id),
         todoist_project_id=task.project_id,
         todoist_project_name=project.name,
         todoist_labels=task.labels,
@@ -78,13 +78,13 @@ def map_task_to_todo(
         due_date=due_date,
         due_time=due_time,
         due_timezone=due_timezone,
-        completed=task.is_completed,
+        completed=task.checked,
         completed_at=task.completed_at,
         parent_id=task.parent_id,
         section_id=task.section_id,
         section_name=section_name,
         comments_markdown=comments_markdown,
-        created_at=task.created_at,
+        created_at=task.added_at,
         updated_at=now,
         last_synced_at=now,
         sync_status="ok",
@@ -109,7 +109,7 @@ def map_project_to_notion(project: TodoistProject) -> NotionProject:
     return NotionProject(
         todoist_project_id=project.id,
         name=project.name,
-        url=project.url,
+        url=build_todoist_project_url(project.id),
         is_shared=project.is_shared,
         color=project.color,
         last_synced_at=get_current_timestamp(),
@@ -138,14 +138,14 @@ def create_archived_todo(task: TodoistTask, project: TodoistProject) -> NotionTo
         title=task.content,
         body=task.description or "",
         todoist_task_id=task.id,
-        todoist_url=task.url,
+        todoist_url=build_todoist_task_url(task.id),
         todoist_project_id=task.project_id,
         todoist_project_name=project.name,
         todoist_labels=task.labels,
         priority=task.priority,
         completed=True,  # Mark as completed when archived
         completed_at=now,
-        created_at=task.created_at,
+        created_at=task.added_at,
         updated_at=now,
         last_synced_at=now,
         sync_status="archived",

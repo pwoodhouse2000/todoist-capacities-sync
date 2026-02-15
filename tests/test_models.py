@@ -24,8 +24,7 @@ class TestTodoistModels:
             id="123",
             content="Test task",
             project_id="456",
-            url="https://todoist.com/showTask?id=123",
-            created_at="2025-10-09T12:00:00Z",
+            added_at="2025-10-09T12:00:00Z",
         )
         assert task.id == "123"
         assert task.content == "Test task"
@@ -39,8 +38,7 @@ class TestTodoistModels:
             id="123",
             content="Test task",
             project_id="456",
-            url="https://todoist.com/showTask?id=123",
-            created_at="2025-10-09T12:00:00Z",
+            added_at="2025-10-09T12:00:00Z",
             due=TodoistDue(
                 date="2025-10-15",
                 string="Oct 15",
@@ -58,7 +56,6 @@ class TestTodoistModels:
             id="789",
             name="My Project",
             color="blue",
-            url="https://todoist.com/app/project/789",
         )
         assert project.id == "789"
         assert project.name == "My Project"
@@ -142,21 +139,19 @@ class TestModelValidation:
                 id="123",
                 # Missing 'content'
                 project_id="456",
-                url="https://todoist.com/showTask?id=123",
-                created_at="2025-10-09T12:00:00Z",
+                added_at="2025-10-09T12:00:00Z",
             )
         errors = exc_info.value.errors()
         assert any(e["loc"] == ("content",) for e in errors)
 
     def test_model_extra_fields_ignored(self):
         """Test that extra fields are handled appropriately."""
-        # Pydantic should ignore extra fields by default
+        # Pydantic should ignore extra fields with ConfigDict(extra="ignore")
         task = TodoistTask(
             id="123",
             content="Test",
             project_id="456",
-            url="https://todoist.com/showTask?id=123",
-            created_at="2025-10-09T12:00:00Z",
+            added_at="2025-10-09T12:00:00Z",
             extra_field="ignored",  # This should be ignored
         )
         assert task.id == "123"

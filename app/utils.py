@@ -181,6 +181,29 @@ def extract_person_labels(labels: List[str]) -> List[str]:
     return person_labels
 
 
+def get_area_label_from_parent_project(project_name: str) -> Optional[str]:
+    """
+    Try to match a project name to a PARA area label.
+
+    Args:
+        project_name: Todoist project name
+
+    Returns:
+        Matching area label name if found, None otherwise
+    """
+    from app.settings import settings
+
+    if not settings.enable_para_areas or not project_name:
+        return None
+
+    clean_name = project_name.strip().upper()
+    for area in settings.para_area_labels:
+        if area.upper() in clean_name or clean_name in area.upper():
+            return area
+
+    return None
+
+
 def strip_notion_backlink(description: str) -> str:
     """
     Strip Notion backlink from task description to avoid circular sync.

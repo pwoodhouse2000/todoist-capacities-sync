@@ -32,9 +32,8 @@ def sample_todoist_task() -> TodoistTask:
             timezone="America/Los_Angeles",
             is_recurring=False,
         ),
-        url="https://todoist.com/showTask?id=12345678",
-        created_at="2025-10-01T10:00:00Z",
-        is_completed=False,
+        added_at="2025-10-01T10:00:00Z",
+        checked=False,
         completed_at=None,
     )
 
@@ -47,7 +46,6 @@ def sample_todoist_project() -> TodoistProject:
         name="Test Project",
         color="blue",
         is_shared=False,
-        url="https://todoist.com/app/project/98765",
     )
 
 
@@ -141,8 +139,7 @@ def mock_todoist_api_response() -> Dict[str, Any]:
             "timezone": "America/Los_Angeles",
             "is_recurring": False,
         },
-        "url": "https://todoist.com/showTask?id=12345678",
-        "created_at": "2025-10-01T10:00:00Z",
-        "is_completed": False,
+        "added_at": "2025-10-01T10:00:00Z",
+        "checked": False,
     }
 

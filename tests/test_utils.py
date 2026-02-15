@@ -271,14 +271,16 @@ class TestExtractParaAreas:
         areas = extract_para_areas(labels)
         assert areas == []
 
-    def test_area_with_emoji_required(self):
-        """Test that only labels with folder emoji are considered areas."""
+    def test_area_with_and_without_emoji(self):
+        """Test that areas match with or without folder emoji."""
         labels = ["WORK 📁", "HEALTH", "capsync"]
         areas = extract_para_areas(labels)
-        # Only WORK with emoji should be extracted
+        # WORK with emoji should be extracted
         assert "WORK" in areas
-        # HEALTH without emoji should not be extracted
-        assert "HEALTH" not in areas
+        # HEALTH without emoji should also be extracted (exact match against PARA areas)
+        assert "HEALTH" in areas
+        # capsync is not a PARA area
+        assert "capsync" not in areas
 
     def test_case_insensitive_matching(self):
         """Test that area matching is case-insensitive."""

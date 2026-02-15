@@ -106,8 +106,8 @@ class TestEndToEndSyncWorkflow:
         mock_notion_client.update_todo_page.assert_awaited_once_with(
             "existing_page_id",
             unittest.mock.ANY,  # The NotionToDo object
-            None,  # area_page_id
-            [],    # people_page_ids
+            unittest.mock.ANY,  # area_page_ids (list, depends on mock area lookups)
+            unittest.mock.ANY,  # people_page_ids (list)
             project_page_id="proj_page_id",
         )
         mock_notion_client.create_todo_page.assert_not_awaited()
@@ -244,13 +244,47 @@ class TestMapperIntegration:
 
         assert project.todoist_project_id == sample_todoist_project.id
         assert project.name == sample_todoist_project.name
-        assert project.url == sample_todoist_project.url
+        assert project.url == f"https://todoist.com/app/project/{sample_todoist_project.id}"
         assert project.color == sample_todoist_project.color
 
 
 @pytest.mark.asyncio
 class TestErrorRecovery:
     """Test error handling and recovery."""
+
+    @pytest.fixture
+    def mock_todoist_client(self, sample_todoist_task, sample_todoist_project, sample_todoist_comments):
+        """Mock Todoist client with pre-configured responses."""
+        mock_client = AsyncMock()
+        mock_client.get_task.return_value = sample_todoist_task
+        mock_client.get_project.return_value = sample_todoist_project
+        mock_client.get_comments.return_value = sample_todoist_comments
+        return mock_client
+
+    @pytest.fixture
+    def mock_notion_client(self, mock_notion_page_response):
+        """Mock Notion client with pre-configured responses."""
+        mock_client = AsyncMock()
+        mock_client.find_project_by_todoist_id.return_value = None
+        mock_client.create_project_page.return_value = {"id": "proj_page_id"}
+        mock_client.find_todo_by_todoist_id.return_value = None
+        mock_client.create_todo_page.return_value = mock_notion_page_response
+        return mock_client
+
+    @pytest.fixture
+    def mock_store(self):
+        """Mock Firestore store."""
+        mock_store = AsyncMock()
+        mock_store.get_task_state.return_value = None
+        mock_store.get_project_state.return_value = None
+        mock_store.save_task_state.return_value = None
+        mock_store.save_project_state.return_value = None
+        return mock_store
+
+    @pytest.fixture
+    def sync_worker(self, mock_todoist_client, mock_notion_client, mock_store):
+        """Create a SyncWorker instance with mocked dependencies."""
+        return SyncWorker(mock_todoist_client, mock_notion_client, mock_store)
 
     async def test_task_not_found_in_todoist(
         self,

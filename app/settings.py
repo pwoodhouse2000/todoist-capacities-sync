@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     notion_people_database_id: str = ""  # Optional: People database for person assignments
 
     # API Base URLs
-    todoist_api_base_url: str = "https://api.todoist.com/rest/v2"
+    todoist_api_base_url: str = "https://api.todoist.com/api/v1"
     notion_api_base_url: str = "https://api.notion.com/v1"
 
     # Rate limiting and retries

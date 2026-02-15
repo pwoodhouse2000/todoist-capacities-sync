@@ -414,17 +414,13 @@ async def test_sync_task(task_id: str, request: Request, dry_run: bool = True) -
         task_id: Todoist task ID to sync
         dry_run: If True, only simulate. If False, actually create in Notion.
     """
-    # Validate task_id format (Todoist IDs are numeric strings)
-    if not task_id.isdigit():
-        logger.warning(
-            "Invalid task ID format received",
-            extra={"task_id": task_id, "error": "Task ID must be numeric"},
-        )
+    # Validate task_id format (v1 API uses alphanumeric IDs)
+    if not task_id or not task_id.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid task ID format: '{task_id}'. Todoist task IDs must be numeric strings.",
+            detail="Task ID cannot be empty.",
         )
-    
+
     try:
         from app.mapper import map_project_to_notion, map_task_to_todo
         from app.utils import has_capsync_label
