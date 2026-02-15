@@ -120,7 +120,11 @@ class NotionClient:
             "Is Shared": {"checkbox": project.is_shared},
             "Status": {"select": {"name": "Active"}},
         }
-        
+
+        # Add Last Synced timestamp if present
+        if project.last_synced_at:
+            properties["Last Synced"] = {"date": {"start": project.last_synced_at}}
+
         # Add AREAS relations if provided (supports multiple areas)
         if area_page_ids:
             properties["AREAS"] = {"relation": [{"id": aid} for aid in area_page_ids]}
@@ -173,6 +177,10 @@ class NotionClient:
             "Is Shared": {"checkbox": project.is_shared},
             "Status": {"select": {"name": "Active"}},
         }
+
+        # Update Last Synced timestamp if present
+        if project.last_synced_at:
+            properties["Last Synced"] = {"date": {"start": project.last_synced_at}}
 
         # Only update AREAS if explicitly provided (typically None for post-creation updates)
         if area_page_ids is not None:
@@ -237,6 +245,10 @@ class NotionClient:
             "Priority": {"select": {"name": f"P{todo.priority}"}},
             "Completed": {"checkbox": todo.completed},
         }
+
+        # Add Last Synced timestamp if present
+        if todo.last_synced_at:
+            properties["Last Synced"] = {"date": {"start": todo.last_synced_at}}
 
         # Add project relation if provided
         if project_page_id:
@@ -356,6 +368,10 @@ class NotionClient:
             "Priority": {"select": {"name": f"P{todo.priority}"}},
             "Completed": {"checkbox": todo.completed},
         }
+
+        # Update Last Synced timestamp if present
+        if todo.last_synced_at:
+            properties["Last Synced"] = {"date": {"start": todo.last_synced_at}}
 
         # Update due date
         if todo.due_date:
