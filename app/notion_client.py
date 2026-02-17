@@ -373,9 +373,11 @@ class NotionClient:
         if todo.last_synced_at:
             properties["Last Synced"] = {"date": {"start": todo.last_synced_at}}
 
-        # Update due date
+        # Update due date (explicitly clear if None to prevent stale dates)
         if todo.due_date:
             properties["Due Date"] = {"date": {"start": todo.due_date}}
+        else:
+            properties["Due Date"] = {"date": None}
 
         # Update labels
         if todo.todoist_labels:
