@@ -678,7 +678,7 @@ async def migrate_v1_ids(request: Request, dry_run: bool = True) -> Dict[str, An
         return {"status": "error", "message": "Firestore not available"}
 
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         from app.models import TaskSyncState, ProjectSyncState, SyncStatus
         from app.utils import compute_payload_hash
         from app.mapper import map_task_to_todo, map_project_to_notion
@@ -941,7 +941,7 @@ async def migrate_v1_ids(request: Request, dry_run: bool = True) -> Dict[str, An
                             todoist_task_id=match["new_id"],
                             capacities_object_id=match["notion_page_id"],
                             payload_hash=compute_payload_hash(todo.model_dump()),
-                            last_synced_at=datetime.now(),
+                            last_synced_at=datetime.now(timezone.utc),
                             sync_status=SyncStatus.OK,
                             sync_source="migration",
                         )
@@ -963,7 +963,7 @@ async def migrate_v1_ids(request: Request, dry_run: bool = True) -> Dict[str, An
                             todoist_task_id=entry["todoist_id"],
                             capacities_object_id=entry["page"]["id"],
                             payload_hash=compute_payload_hash(todo.model_dump()),
-                            last_synced_at=datetime.now(),
+                            last_synced_at=datetime.now(timezone.utc),
                             sync_status=SyncStatus.OK,
                             sync_source="migration",
                         )
@@ -983,7 +983,7 @@ async def migrate_v1_ids(request: Request, dry_run: bool = True) -> Dict[str, An
                         todoist_project_id=proj_match["new_id"],
                         capacities_object_id=proj_match["notion_page_id"],
                         payload_hash=compute_payload_hash(notion_proj.model_dump()),
-                        last_synced_at=datetime.now(),
+                        last_synced_at=datetime.now(timezone.utc),
                     )
                     await store.save_project_state(proj_state)
                     proj_states_saved += 1

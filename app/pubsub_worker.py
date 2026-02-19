@@ -1,6 +1,6 @@
 """Pub/Sub worker for processing sync jobs."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.notion_client import NotionClient
@@ -296,7 +296,7 @@ class SyncWorker:
             capacities_object_id=notion_page_id,  # Using same field name for compatibility
             payload_hash=payload_hash,
             notion_payload_hash=notion_hash,
-            last_synced_at=datetime.now(),
+            last_synced_at=datetime.now(timezone.utc),
             sync_status=SyncStatus.OK,
             sync_source=sync_source,
         )
@@ -430,7 +430,7 @@ class SyncWorker:
             todoist_project_id=project_id,
             capacities_object_id=notion_page_id,  # Using same field name for compatibility
             payload_hash=compute_payload_hash(project.model_dump()),
-            last_synced_at=datetime.now(),
+            last_synced_at=datetime.now(timezone.utc),
         )
         await self.store.save_project_state(state)
 

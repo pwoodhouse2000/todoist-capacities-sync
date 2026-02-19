@@ -1,6 +1,6 @@
 """Firestore operations for storing sync state."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from google.cloud import firestore
@@ -174,7 +174,7 @@ class FirestoreStore:
         state = await self.get_task_state(todoist_task_id)
         if state:
             state.sync_status = SyncStatus.ARCHIVED
-            state.last_synced_at = datetime.now()
+            state.last_synced_at = datetime.now(timezone.utc)
             if error_message:
                 state.error_message = error_message
             await self.save_task_state(state)
@@ -196,7 +196,7 @@ class FirestoreStore:
         if state:
             state.sync_status = SyncStatus.ERROR
             state.error_message = error_message
-            state.last_synced_at = datetime.now()
+            state.last_synced_at = datetime.now(timezone.utc)
             await self.save_task_state(state)
 
     async def clear_all_task_states(self) -> int:

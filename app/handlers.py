@@ -555,7 +555,7 @@ class ReconcileHandler:
 
                 state.payload_hash = new_payload_hash
                 state.notion_payload_hash = current_hash
-                state.last_synced_at = datetime.now()
+                state.last_synced_at = datetime.now(timezone.utc)
                 state.sync_source = "notion-to-todoist"
                 await self.store.save_task_state(state)
 
@@ -685,7 +685,7 @@ class ReconcileHandler:
                     capacities_object_id=notion_page_id,
                     payload_hash=payload_hash,
                     notion_payload_hash=notion_hash,
-                    last_synced_at=datetime.now(),
+                    last_synced_at=datetime.now(timezone.utc),
                     sync_status=SyncStatus.OK,
                     sync_source="notion-created",
                 )
