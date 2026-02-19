@@ -33,9 +33,30 @@ class TodoistClient:
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
         }
+        # Shared httpx client for connection pooling (reuses TCP/TLS connections)
+        self._client: Optional[httpx.AsyncClient] = None
         # In-memory caches for reducing API calls during reconciliation
         self._project_cache: Dict[str, "TodoistProject"] = {}
         self._section_cache: Dict[str, "TodoistSection"] = {}
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Get or create the shared httpx client with connection pooling."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=settings.request_timeout,
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30,
+                ),
+            )
+        return self._client
+
+    async def close(self) -> None:
+        """Close the shared httpx client and release connections."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -56,11 +77,11 @@ class TodoistClient:
             httpx.HTTPError: On request failure
         """
         url = f"{self.base_url}{endpoint}"
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
-            logger.info("Todoist GET request", extra={"endpoint": endpoint, "params": params})
-            response = await client.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            return response.json()
+        client = self._get_client()
+        logger.info("Todoist GET request", extra={"endpoint": endpoint, "params": params})
+        response = await client.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+        return response.json()
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -81,13 +102,13 @@ class TodoistClient:
             httpx.HTTPError: On request failure
         """
         url = f"{self.base_url}{endpoint}"
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
-            logger.info("Todoist POST request", extra={"endpoint": endpoint})
-            response = await client.post(url, headers=self.headers, json=data or {})
-            response.raise_for_status()
-            if response.status_code == 204:
-                return None
-            return response.json()
+        client = self._get_client()
+        logger.info("Todoist POST request", extra={"endpoint": endpoint})
+        response = await client.post(url, headers=self.headers, json=data or {})
+        response.raise_for_status()
+        if response.status_code == 204:
+            return None
+        return response.json()
 
     @retry(
         stop=stop_after_attempt(settings.max_retries),
@@ -101,10 +122,10 @@ class TodoistClient:
             endpoint: API endpoint (e.g., "/tasks/123")
         """
         url = f"{self.base_url}{endpoint}"
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
-            logger.info("Todoist DELETE request", extra={"endpoint": endpoint})
-            response = await client.delete(url, headers=self.headers)
-            response.raise_for_status()
+        client = self._get_client()
+        logger.info("Todoist DELETE request", extra={"endpoint": endpoint})
+        response = await client.delete(url, headers=self.headers)
+        response.raise_for_status()
 
     async def _get_paginated(self, endpoint: str, params: Optional[Dict] = None) -> List[Dict]:
         """

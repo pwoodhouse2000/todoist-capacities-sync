@@ -74,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Cleanup
     logger.info("Shutting down application")
+    await app.state.todoist_client.close()
     if app.state.store:
         await app.state.store.close()
 
