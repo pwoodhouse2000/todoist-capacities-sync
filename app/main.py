@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import hmac
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Dict
 
@@ -106,7 +107,6 @@ def _verify_webhook_signature(body: bytes, signature_header: str) -> bool:
     """
     import base64
     import hashlib
-    import hmac
 
     if not settings.todoist_client_secret:
         # No client secret configured - skip verification (dev mode)
@@ -130,6 +130,51 @@ def _verify_webhook_signature(body: bytes, signature_header: str) -> bool:
         logger.warning("Webhook HMAC signature mismatch")
 
     return is_valid
+
+
+async def _verify_oidc_token(token: str, request: Request) -> bool:
+    """
+    Verify a Google OIDC token from Cloud Scheduler.
+
+    Validates the token signature against Google's public keys and checks
+    the audience claim matches this service's URL.
+
+    Args:
+        token: The raw JWT string (without "Bearer " prefix)
+        request: FastAPI request (used to determine expected audience)
+
+    Returns:
+        True if token is valid
+    """
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+
+        # The audience should be the Cloud Run service URL
+        # Cloud Scheduler sets this to the target URL
+        expected_audience = str(request.base_url).rstrip("/")
+
+        claims = id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            audience=expected_audience,
+        )
+
+        logger.debug(
+            "OIDC token verified",
+            extra={"email": claims.get("email"), "audience": claims.get("aud")},
+        )
+        return True
+
+    except ImportError:
+        logger.warning(
+            "google-auth not installed, cannot verify OIDC tokens. "
+            "Rejecting OIDC request. Install google-auth or use internal_cron_token."
+        )
+        return False
+    except Exception as e:
+        logger.warning("OIDC token verification failed", extra={"error": str(e)})
+        return False
 
 
 @app.post("/todoist/webhook")
@@ -180,7 +225,7 @@ async def todoist_webhook(request: Request) -> Dict[str, Any]:
         logger.error("Error processing webhook", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing webhook: {str(e)}",
+            detail="Internal error processing webhook",
         )
 
 
@@ -311,25 +356,27 @@ async def reconcile(
     # Verify authorization token
     # Accept either:
     # 1. Bearer token with internal cron token
-    # 2. OIDC token from Cloud Scheduler (starts with "Bearer eyJ")
+    # 2. OIDC token from Cloud Scheduler (verified against Google's public keys)
     is_valid = False
-    
+
     if authorization:
         if authorization.startswith("Bearer eyJ"):
-            # This is likely an OIDC token from Cloud Scheduler
-            # In production, this would be validated against Google's public keys
-            # For now, we accept it as valid since Cloud Scheduler is authorized via IAM
-            is_valid = True
-            logger.info("Reconciliation triggered via Cloud Scheduler OIDC token")
+            # OIDC token from Cloud Scheduler — verify signature and claims
+            is_valid = await _verify_oidc_token(authorization[7:], request)
+            if is_valid:
+                logger.info("Reconciliation triggered via verified Cloud Scheduler OIDC token")
         else:
             # Check for Bearer token with internal cron token
             expected_token = f"Bearer {settings.internal_cron_token}"
-            if authorization == expected_token:
+            if hmac.compare_digest(authorization, expected_token):
                 is_valid = True
                 logger.info("Reconciliation triggered via internal cron token")
-    
+
     if not is_valid:
-        logger.warning("Unauthorized reconcile attempt", extra={"auth_header": authorization[:20] if authorization else None})
+        logger.warning(
+            "Unauthorized reconcile attempt",
+            extra={"auth_header": authorization[:20] if authorization else None},
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authorization token",
@@ -344,7 +391,7 @@ async def reconcile(
         logger.error("Error during reconciliation", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error during reconciliation: {str(e)}",
+            detail="Internal error during reconciliation",
         )
 
 
