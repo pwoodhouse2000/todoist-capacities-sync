@@ -291,13 +291,15 @@ async def process_pubsub(request: Request) -> Dict[str, Any]:
             "action": pubsub_message.action,
         }
         
+    except HTTPException:
+        raise  # Re-raise 400 for malformed messages (no retry needed)
     except Exception as e:
         logger.error("Error processing Pub/Sub message", exc_info=True)
-        # Don't raise HTTPException - Pub/Sub will retry on failure
-        return {
-            "status": "error",
-            "error": str(e),
-        }
+        # Return 500 so Pub/Sub push subscription retries the message
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process sync message",
+        )
 
 
 @app.get("/test/reconcile")
