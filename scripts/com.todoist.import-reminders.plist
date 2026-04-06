@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.todoist.import-reminders</string>
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Update this path to your Python interpreter -->
+        <string>/usr/local/bin/python3</string>
+        <string>scripts/import_reminders.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <!-- Update this path to your repo checkout -->
+    <string>/path/to/todoist-capacities-sync</string>
+    <key>StartInterval</key>
+    <!-- Run every 15 minutes (900 seconds) -->
+    <integer>900</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/import-reminders.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/import-reminders.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
